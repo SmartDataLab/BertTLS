@@ -21,7 +21,7 @@ class Classifier(nn.Module):
 
 class PositionalEncoding(nn.Module):
 
-    def __init__(self, dropout, dim, max_len=5000):
+    def __init__(self, dropout, dim, max_len=5000): # TODO(Li Yihong): craete a new class similiar to this structure. date embedding
         pe = torch.zeros(max_len, dim)
         position = torch.arange(0, max_len).unsqueeze(1)
         div_term = torch.exp((torch.arange(0, dim, 2, dtype=torch.float) *
@@ -76,7 +76,7 @@ class TransformerInterEncoder(nn.Module):
         super(TransformerInterEncoder, self).__init__()
         self.d_model = d_model
         self.num_inter_layers = num_inter_layers
-        self.pos_emb = PositionalEncoding(dropout, d_model)
+        self.pos_emb = PositionalEncoding(dropout, d_model)  #TODO(Li Yihong)
         self.transformer_inter = nn.ModuleList(
             [TransformerEncoderLayer(d_model, heads, d_ff, dropout)
              for _ in range(num_inter_layers)])
