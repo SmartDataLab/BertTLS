@@ -238,7 +238,7 @@ class Trainer(object):
                 with torch.no_grad():
                     for batch in test_iter:
                         src = batch.src
-                        labels = batch.labels
+                        labels = batch.labels  # TODO(): add date
                         segs = batch.segs
                         clss = batch.clss
                         mask = batch.mask
@@ -294,7 +294,7 @@ class Trainer(object):
                         for i in range(len(pred)):
                             save_pred.write(pred[i].strip()+'\n')
         if(step!=-1 and self.args.report_rouge):
-            rouges = test_rouge(self.args.temp_dir, can_path, gold_path)
+            rouges = test_rouge(self.args.temp_dir, can_path, gold_path)  # TODO(): replace simple ROUGE to TLS-ROUGE(date)
             logger.info('Rouges at step %d \n%s' % (step, rouge_results_to_str(rouges)))
         self._report_step(0, step, valid_stats=stats)
 
