@@ -95,7 +95,7 @@ def combination_selection(doc_sent_list, abstract_sent_list, summary_size):
     return sorted(list(max_idx))
 
 
-def greedy_selection(doc_sent_list, abstract_sent_list, summary_size):
+def greedy_selection(doc_sent_list, abstract_sent_list, summary_size): #TODO(): replace simple ROUGE to TLS ROUGE 
     def _rouge_clean(s):
         return re.sub(r'[^a-zA-Z0-9 ]', '', s)
 
@@ -141,7 +141,7 @@ def hashhex(s):
     return h.hexdigest()
 
 
-class BertData():
+class BertData():  # TODO(): add date information
     def __init__(self, args):
         self.args = args
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
@@ -149,7 +149,7 @@ class BertData():
         self.cls_vid = self.tokenizer.vocab['[CLS]']
         self.pad_vid = self.tokenizer.vocab['[PAD]']
 
-    def preprocess(self, src, tgt, oracle_ids):
+    def preprocess(self, src, tgt, oracle_ids): 
 
         if (len(src) == 0):
             return None
@@ -194,7 +194,7 @@ class BertData():
 
         tgt_txt = '<q>'.join([' '.join(tt) for tt in tgt])
         src_txt = [original_src_txt[i] for i in idxs]
-        return src_subtoken_idxs, labels, segments_ids, cls_ids, src_txt, tgt_txt
+        return src_subtoken_idxs, labels, segments_ids, cls_ids, src_txt, tgt_txt  # TODO() replace position information(segments) to date information
 
 
 def format_to_bert(args):

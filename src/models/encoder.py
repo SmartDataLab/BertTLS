@@ -19,54 +19,57 @@ class Classifier(nn.Module):
         return sent_scores
 
 
-class PositionalEncoding(nn.Module):#位置编码
-
-    def __init__(self, dropout, dim, max_len=5000):
-        pe = torch.zeros(max_len, dim)#最大长度*维度的0矩阵
-        position = torch.arange(0, max_len).unsqueeze(1)#返回maxlen*1维序列张量
-        div_term = torch.exp((torch.arange(0, dim, 2, dtype=torch.float) *#0到维数步长为2的一维序列张量
-                              -(math.log(10000.0) / dim)))
+class PositionalEncoding(nn.Module):  # 位置编码
+    def __init__(
+        self, dropout, dim, max_len=5000
+    ):  # TODO(Li Yihong): craete a new class similiar to this structure. date embedding
+        pe = torch.zeros(max_len, dim)  # 最大长度*维度的0矩阵
+        position = torch.arange(0, max_len).unsqueeze(1)  # 返回maxlen*1维序列张量
+        div_term = torch.exp(
+            (
+                torch.arange(0, dim, 2, dtype=torch.float)
+                * -(math.log(10000.0) / dim)  # 0到维数步长为2的一维序列张量
+            )
+        )
         pe[:, 0::2] = torch.sin(position.float() * div_term)
         pe[:, 1::2] = torch.cos(position.float() * div_term)
         pe = pe.unsqueeze(0)
         super(PositionalEncoding, self).__init__()
-        self.register_buffer('pe', pe)
+        self.register_buffer("pe", pe)
         self.dropout = nn.Dropout(p=dropout)
         self.dim = dim
 
     def forward(self, emb, step=None):
         emb = emb * math.sqrt(self.dim)
-        if (step):
+        if step:
             emb = emb + self.pe[:, step][:, None, :]
 
         else:
-            emb = emb + self.pe[:, :emb.size(1)]
+            emb = emb + self.pe[:, : emb.size(1)]
         emb = self.dropout(emb)
         return emb
 
     def get_emb(self, emb):
-        return self.pe[:, :emb.size(1)]
+        return self.pe[:, : emb.size(1)]
 
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, d_model, heads, d_ff, dropout):
         super(TransformerEncoderLayer, self).__init__()
 
-        self.self_attn = MultiHeadedAttention(
-            heads, d_model, dropout=dropout)
+        self.self_attn = MultiHeadedAttention(heads, d_model, dropout=dropout)
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, iter, query, inputs, mask):
-        if (iter != 0):
+        if iter != 0:
             input_norm = self.layer_norm(inputs)
         else:
             input_norm = inputs
 
         mask = mask.unsqueeze(1)
-        context = self.self_attn(input_norm, input_norm, input_norm,
-                                 mask=mask)
+        context = self.self_attn(input_norm, input_norm, input_norm, mask=mask)
         out = self.dropout(context) + inputs
         return self.feed_forward(out)
 
@@ -76,10 +79,13 @@ class TransformerInterEncoder(nn.Module):
         super(TransformerInterEncoder, self).__init__()
         self.d_model = d_model
         self.num_inter_layers = num_inter_layers
-        self.pos_emb = PositionalEncoding(dropout, d_model)
+        self.pos_emb = PositionalEncoding(dropout, d_model)  # TODO(Li Yihong)
         self.transformer_inter = nn.ModuleList(
-            [TransformerEncoderLayer(d_model, heads, d_ff, dropout)
-             for _ in range(num_inter_layers)])
+            [
+                TransformerEncoderLayer(d_model, heads, d_ff, dropout)
+                for _ in range(num_inter_layers)
+            ]
+        )
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
         self.wo = nn.Linear(d_model, 1, bias=True)
@@ -94,7 +100,9 @@ class TransformerInterEncoder(nn.Module):
         x = x + pos_emb
 
         for i in range(self.num_inter_layers):
-            x = self.transformer_inter[i](i, x, x, 1 - mask)  # all_sents * max_tokens * dim
+            x = self.transformer_inter[i](
+                i, x, x, 1 - mask
+            )  # all_sents * max_tokens * dim
 
         x = self.layer_norm(x)
         sent_scores = self.sigmoid(self.wo(x))
@@ -104,9 +112,7 @@ class TransformerInterEncoder(nn.Module):
 
 
 class RNNEncoder(nn.Module):
-
-    def __init__(self, bidirectional, num_layers, input_size,
-                 hidden_size, dropout=0.0):
+    def __init__(self, bidirectional, num_layers, input_size, hidden_size, dropout=0.0):
         super(RNNEncoder, self).__init__()
         num_directions = 2 if bidirectional else 1
         assert hidden_size % num_directions == 0
@@ -116,7 +122,8 @@ class RNNEncoder(nn.Module):
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
-            bidirectional=bidirectional)
+            bidirectional=bidirectional,
+        )
 
         self.wo = nn.Linear(num_directions * hidden_size, 1, bias=True)
         self.dropout = nn.Dropout(dropout)
