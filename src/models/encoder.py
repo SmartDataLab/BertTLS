@@ -19,12 +19,12 @@ class Classifier(nn.Module):
         return sent_scores
 
 
-class PositionalEncoding(nn.Module):
+class PositionalEncoding(nn.Module):#位置编码
 
     def __init__(self, dropout, dim, max_len=5000):
-        pe = torch.zeros(max_len, dim)
-        position = torch.arange(0, max_len).unsqueeze(1)
-        div_term = torch.exp((torch.arange(0, dim, 2, dtype=torch.float) *
+        pe = torch.zeros(max_len, dim)#最大长度*维度的0矩阵
+        position = torch.arange(0, max_len).unsqueeze(1)#返回maxlen*1维序列张量
+        div_term = torch.exp((torch.arange(0, dim, 2, dtype=torch.float) *#0到维数步长为2的一维序列张量
                               -(math.log(10000.0) / dim)))
         pe[:, 0::2] = torch.sin(position.float() * div_term)
         pe[:, 1::2] = torch.cos(position.float() * div_term)
