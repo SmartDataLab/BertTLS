@@ -5,21 +5,33 @@ import time
 
 from others import pyrouge
 
-REMAP = {"-lrb-": "(", "-rrb-": ")", "-lcb-": "{", "-rcb-": "}",
-         "-lsb-": "[", "-rsb-": "]", "``": '"', "''": '"'}
+import datetime
+from tilse.data import timelines
+from tilse.evaluation import rouge
+
+REMAP = {
+    "-lrb-": "(",
+    "-rrb-": ")",
+    "-lcb-": "{",
+    "-rcb-": "}",
+    "-lsb-": "[",
+    "-rsb-": "]",
+    "``": '"',
+    "''": '"',
+}
 
 
 def clean(x):
     return re.sub(
-        r"-lrb-|-rrb-|-lcb-|-rcb-|-lsb-|-rsb-|``|''",
-        lambda m: REMAP.get(m.group()), x)
+        r"-lrb-|-rrb-|-lcb-|-rcb-|-lsb-|-rsb-|``|''", lambda m: REMAP.get(m.group()), x
+    )
 
 
 def process(params):
     temp_dir, data = params
     candidates, references, pool_id = data
     cnt = len(candidates)
-    current_time = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime())
+    current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     tmp_dir = os.path.join(temp_dir, "rouge-tmp-{}-{}".format(current_time, pool_id))
     if not os.path.isdir(tmp_dir):
         os.mkdir(tmp_dir)
@@ -30,17 +42,19 @@ def process(params):
         for i in range(cnt):
             if len(references[i]) < 1:
                 continue
-            with open(tmp_dir + "/candidate/cand.{}.txt".format(i), "w",
-                      encoding="utf-8") as f:
+            with open(
+                tmp_dir + "/candidate/cand.{}.txt".format(i), "w", encoding="utf-8"
+            ) as f:
                 f.write(candidates[i])
-            with open(tmp_dir + "/reference/ref.{}.txt".format(i), "w",
-                      encoding="utf-8") as f:
+            with open(
+                tmp_dir + "/reference/ref.{}.txt".format(i), "w", encoding="utf-8"
+            ) as f:
                 f.write(references[i])
         r = pyrouge.Rouge155(temp_dir=temp_dir)
         r.model_dir = tmp_dir + "/reference/"
         r.system_dir = tmp_dir + "/candidate/"
-        r.model_filename_pattern = 'ref.#ID#.txt'
-        r.system_filename_pattern = r'cand.(\d+).txt'
+        r.model_filename_pattern = "ref.#ID#.txt"
+        r.system_filename_pattern = r"cand.(\d+).txt"
         rouge_results = r.convert_and_evaluate()
         print(rouge_results)
         results_dict = r.output_to_dict(rouge_results)
@@ -52,14 +66,14 @@ def process(params):
 
 
 def test_rouge(temp_dir, cand, ref):
-    candidates = [line.strip() for line in open(cand, encoding='utf-8')]
-    references = [line.strip() for line in open(ref, encoding='utf-8')]
+    candidates = [line.strip() for line in open(cand, encoding="utf-8")]
+    references = [line.strip() for line in open(ref, encoding="utf-8")]
     print(len(candidates))
     print(len(references))
     assert len(candidates) == len(references)
 
     cnt = len(candidates)
-    current_time = time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime())
+    current_time = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
     tmp_dir = os.path.join(temp_dir, "rouge-tmp-{}".format(current_time))
     if not os.path.isdir(tmp_dir):
         os.mkdir(tmp_dir)
@@ -70,17 +84,19 @@ def test_rouge(temp_dir, cand, ref):
         for i in range(cnt):
             if len(references[i]) < 1:
                 continue
-            with open(tmp_dir + "/candidate/cand.{}.txt".format(i), "w",
-                      encoding="utf-8") as f:
+            with open(
+                tmp_dir + "/candidate/cand.{}.txt".format(i), "w", encoding="utf-8"
+            ) as f:
                 f.write(candidates[i])
-            with open(tmp_dir + "/reference/ref.{}.txt".format(i), "w",
-                      encoding="utf-8") as f:
+            with open(
+                tmp_dir + "/reference/ref.{}.txt".format(i), "w", encoding="utf-8"
+            ) as f:
                 f.write(references[i])
         r = pyrouge.Rouge155(temp_dir=temp_dir)
         r.model_dir = tmp_dir + "/reference/"
         r.system_dir = tmp_dir + "/candidate/"
-        r.model_filename_pattern = 'ref.#ID#.txt'
-        r.system_filename_pattern = r'cand.(\d+).txt'
+        r.model_filename_pattern = "ref.#ID#.txt"
+        r.system_filename_pattern = r"cand.(\d+).txt"
         rouge_results = r.convert_and_evaluate()
         print(rouge_results)
         results_dict = r.output_to_dict(rouge_results)
@@ -98,5 +114,29 @@ def rouge_results_to_str(results_dict):
         results_dict["rouge_l_f_score"] * 100,
         results_dict["rouge_1_recall"] * 100,
         results_dict["rouge_2_recall"] * 100,
-        results_dict["rouge_l_recall"] * 100
+        results_dict["rouge_l_recall"] * 100,
     )
+
+
+def datestr2datetime(date_str):
+    try:
+        date_str = date_str.split("T")[0]
+        return datetime.date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
+    except Exception as e:
+        print("date parse fail")
+        return datetime.date(1970, 1, 1)
+
+
+def cal_rouge_tls(doc_sent_list, doc_date_list, abstract_sent_list, abstract_date_list):
+    """
+    docstring
+    """
+
+    evaluator = rouge.TimelineRougeEvaluator(measures=["rouge_1", "rouge_2"])
+    doc_datetime_list = [datestr2datetime(date_str) for date_str in doc_date_list]
+    predicted_timeline = timelines.Timeline(dict(zip(doc_datetime_list, doc_sent_list)))
+    groundtruth = timelines.GroundTruth(
+        [timelines.Timeline(dict(zip(doc_datetime_list, doc_sent_list)))]
+    )
+    res_dict = evaluator.evaluate_concat(predicted_timeline, groundtruth)
+    return res_dict["rouge_1"]["f_score"], res_dict["rouge_2"]["f_score"]

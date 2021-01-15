@@ -14,8 +14,9 @@ class Batch(object):
         rtn_data = [d + [pad_id] * (width - len(d)) for d in data]
         return rtn_data
 
-    def __init__(self, data=None, device=None, is_test=False):
+    def __init__(self, data=None, device=None, is_test=False, is_tls=True):
         """Create a Batch from a list of examples."""
+        # TODO
         if data is not None:
             self.batch_size = len(data)
             pre_src = [x[0] for x in data]
@@ -41,10 +42,15 @@ class Batch(object):
             setattr(self, "mask", mask.to(device))
 
             if is_test:
-                src_str = [x[-2] for x in data]
+                src_str = [x[4] for x in data]
                 setattr(self, "src_str", src_str)
-                tgt_str = [x[-1] for x in data]
+                tgt_str = [x[5] for x in data]
                 setattr(self, "tgt_str", tgt_str)
+                if is_tls:
+                    src_date = [x[6] for x in data]
+                    setattr(self, "src_date", src_date)
+                    tgt_date = [x[7] for x in data]
+                    setattr(self, "tgt_date", tgt_date)
 
     def __len__(self):
         return self.batch_size

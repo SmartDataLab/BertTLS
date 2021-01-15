@@ -328,9 +328,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "-mode", default="train", type=str, choices=["train", "validate", "test"]
     )
-    parser.add_argument("-bert_data_path", default="../bert_data/cnndm")
+    parser.add_argument(
+        "-bert_data_path", default="../bert_data/nyt"
+    )  # ../bert_data/cnndm
     parser.add_argument("-model_path", default="../models/")
-    parser.add_argument("-result_path", default="../results/cnndm")
+    parser.add_argument("-result_path", default="../results/nyt")  # ../results/cnndm
     parser.add_argument("-temp_dir", default="../temp/")
     parser.add_argument("-bert_config_path", default="../bert_config_uncased_base.json")
 
@@ -369,7 +371,7 @@ if __name__ == "__main__":
 
     parser.add_argument("-visible_gpus", default="-1", type=str)
     parser.add_argument("-gpu_ranks", default="0", type=str)
-    parser.add_argument("-log_file", default="../logs/cnndm.log")
+    parser.add_argument("-log_file", default="../logs/nyt.log")  # ../logs/cnndm.log
     parser.add_argument("-dataset", default="")
     parser.add_argument("-seed", default=666, type=int)
 
