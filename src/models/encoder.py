@@ -23,7 +23,7 @@ class PositionalEncoding(nn.Module):  # 位置编码
     def __init__(
         self, dropout, dim, max_len=5000
     ):  # TODO(Li Yihong): craete a new class similiar to this structure. date embedding
-        pe = torch.zeros(max_len, dim)  # 最大长度*维度的0矩阵
+        pe = torch.zeros(max_len, dim)  # 最大长度*维度的0矩阵 dim == hidden_size(bert) 512
         position = torch.arange(0, max_len).unsqueeze(1)  # 返回maxlen*1维序列张量
         div_term = torch.exp(
             (
@@ -79,7 +79,7 @@ class TransformerInterEncoder(nn.Module):
         super(TransformerInterEncoder, self).__init__()
         self.d_model = d_model
         self.num_inter_layers = num_inter_layers
-        self.pos_emb = PositionalEncoding(dropout, d_model)  # TODO(Li Yihong)
+        self.pos_emb = PositionalEncoding(dropout, d_model)
         self.transformer_inter = nn.ModuleList(
             [
                 TransformerEncoderLayer(d_model, heads, d_ff, dropout)
@@ -97,7 +97,7 @@ class TransformerInterEncoder(nn.Module):
         batch_size, n_sents = top_vecs.size(0), top_vecs.size(1)
         pos_emb = self.pos_emb.pe[:, :n_sents]
         x = top_vecs * mask[:, :, None].float()
-        x = x + pos_emb
+        x = x + pos_emb  # TODO(sujinhua): + date_emb
 
         for i in range(self.num_inter_layers):
             x = self.transformer_inter[i](

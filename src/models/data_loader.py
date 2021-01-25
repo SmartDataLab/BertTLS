@@ -16,7 +16,6 @@ class Batch(object):
 
     def __init__(self, data=None, device=None, is_test=False, is_tls=True):
         """Create a Batch from a list of examples."""
-        # TODO
         if data is not None:
             self.batch_size = len(data)
             pre_src = [x[0] for x in data]
@@ -194,9 +193,15 @@ class DataIterator(object):
         clss = ex["clss"]
         src_txt = ex["src_txt"]
         tgt_txt = ex["tgt_txt"]
+        if self.args.is_tls:
+            src_date = ex["src_date"]
+            tgt_date = ex["tgt_date"]
 
         if is_test:
-            return src, labels, segs, clss, src_txt, tgt_txt
+            if self.args.is_tls:
+                return src, labels, segs, clss, src_txt, tgt_txt, src_date, tgt_date
+            else:
+                return src, labels, segs, clss, src_txt, tgt_txt
         else:
             return src, labels, segs, clss
 
@@ -242,7 +247,9 @@ class DataIterator(object):
                     continue
                 self.iterations += 1
                 self._iterations_this_epoch += 1
-                batch = Batch(minibatch, self.device, self.is_test)
+                batch = Batch(
+                    minibatch, self.device, self.is_test, is_tls=self.args.is_tls
+                )
 
                 yield batch
             return

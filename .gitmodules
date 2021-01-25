@@ -1,0 +1,3 @@
+[submodule "src/wheels"]
+	path = src/wheels
+	url = https://github.com/SmartDataLab/wheels.git

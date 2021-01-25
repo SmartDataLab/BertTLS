@@ -182,8 +182,11 @@ class Trainer(object):
                         step += 1
                         if step > train_steps:
                             break
+
+            self.args.db_logger.add_attr("step_%s" % step, report_stats.xent(), "train")
             train_iter = train_iter_fct()
 
+        self.args.db_logger.insert_into_db("train")
         return total_stats
 
     def validate(self, valid_iter, step=0):
@@ -215,9 +218,7 @@ class Trainer(object):
             self._report_step(0, step, valid_stats=stats)
             return stats
 
-    def test(
-        self, test_iter, step, cal_lead=False, cal_oracle=False, is_tls=True
-    ):  # TODO(sujinhua): compat is_tls
+    def test(self, test_iter, step, cal_lead=False, cal_oracle=False, is_tls=True):
         """Validate model.
             valid_iter: validate data iterator
         Returns:
@@ -253,7 +254,7 @@ class Trainer(object):
                 with torch.no_grad():
                     for batch in test_iter:
                         src = batch.src
-                        labels = batch.labels  # TODO(): add date
+                        labels = batch.labels
                         segs = batch.segs
                         clss = batch.clss
                         mask = batch.mask
@@ -325,7 +326,7 @@ class Trainer(object):
 
                             if is_tls:
                                 rouge1, rouge2 = cal_rouge_tls(
-                                    _pred, _date, batch.tgt_str[i], tgt_date
+                                    _pred, _date, batch.tgt_str[i], tgt_date[i]
                                 )
                                 tls_rouge_list.append((rouge1, rouge2))
                             else:
@@ -344,19 +345,22 @@ class Trainer(object):
                                 save_pred.write(pred[i].strip() + "\n")
         if step != -1 and self.args.report_rouge:
             if is_tls:
+                rouge1_list = [x[0] for x in tls_rouge_list]
+                rouge2_list = [x[1] for x in tls_rouge_list]
                 logger.info(
                     "Rouges at step %d \n rouge1 : %s, rouge2: %s"
                     % (
                         step,
-                        sum([x[0] for x in tls_rouge_list]) / len(tls_rouge_list),
-                        sum([x[1] for x in tls_rouge_list]) / len(tls_rouge_list),
+                        sum(rouge1_list) / len(tls_rouge_list),
+                        sum(rouge2_list) / len(tls_rouge_list),
                     )
                 )
+                self.args.db_logger.add_attr("rouge1", rouge1_list, "test")
+                self.args.db_logger.add_attr("rouge2", rouge2_list, "test")
+                self.args.db_logger.insert_into_db("test")
+
             else:
-                rouges = test_rouge(
-                    self.args.temp_dir, can_path, gold_path
-                )  # TODO(): replace simple ROUGE to TLS-ROUGE(date)
-                #
+                rouges = test_rouge(self.args.temp_dir, can_path, gold_path)
                 logger.info(
                     "Rouges at step %d \n%s" % (step, rouge_results_to_str(rouges))
                 )
@@ -425,10 +429,13 @@ class Trainer(object):
 
         model_state_dict = real_model.state_dict()
         # generator_state_dict = real_generator.state_dict()
+        args_d = {
+            key: value for key, value in self.args._get_kwargs() if key != "db_logger"
+        }
         checkpoint = {
             "model": model_state_dict,
             # 'generator': generator_state_dict,
-            "opt": self.args,
+            "opt": args_d,
             "optim": self.optim,
         }
         checkpoint_path = os.path.join(self.args.model_path, "model_step_%d.pt" % step)

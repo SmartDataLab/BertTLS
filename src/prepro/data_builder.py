@@ -14,12 +14,24 @@ from multiprocess import Pool
 from pytorch_pretrained_bert import BertTokenizer
 
 from others.logging import logger
-from others.utils import clean
+from others.utils import (
+    clean,
+    cal_rouge_tls,
+    cal_date_f1,
+    _rouge_clean,
+    _process_source,
+)
 from prepro.utils import _get_word_ngrams
 
 import datetime
 from tilse.data import timelines
 from tilse.evaluation import rouge
+
+import math
+import numpy as np
+import random
+
+# TODO(sujinhua): use HeidelTime to get date from timeline
 
 
 def load_json(p, lower):
@@ -141,13 +153,71 @@ def greedy_selection(doc_sent_list, abstract_sent_list, summary_size):
 
 
 def weak_supervision_selection(
+    doc_sent_list,
+    doc_date_list,
+    doc_page_list,
+    doc_taxoscore_list,
+    abstract_size=8,
+    page_weight=1,
+    taxo_weight=10,
+    use_date=True,
+    date_size=2,
+):
+
+    origin_tuple = tuple(
+        zip(range(len(doc_page_list)), doc_page_list, doc_taxoscore_list, doc_date_list)
+    )
+
+    # oracle选取初步想法：
+    # 1.先由page, taxo加权排序得到sorted_tuple(page越大越好，taxo越小越好),
+    # 2.再取sorted_tuple中前n*abstract_size个(n待定)组成小集合selected_tuple
+    # 3.再对小集合里所有的timeline组合取'date方差'最小的一组得到result_tuple
+
+    sorted_tuple = sorted(
+        origin_tuple,
+        key=lambda x: page_weight * x[1] + taxo_weight * (4 - x[2]),
+        reverse=True,  # w_page * page + w_taxo * (4-taxo)
+    )
+
+    if len(sorted_tuple) <= abstract_size:
+        use_date = False  # 当总文章数小于或等于时间线size数时，无法使用date筛选
+
+    if use_date == True:
+        select_size = min(math.ceil(date_size * abstract_size), len(sorted_tuple))
+        selected_tuple = sorted_tuple[0 : select_size - 1]
+        min_Var_date = float("inf")
+        for timeline in itertools.combinations(selected_tuple, abstract_size):
+            dates = list(zip(*timeline))[3]
+            datenum = [int(date[0:8]) for date in dates]
+            Var_date = np.var(datenum)
+            if Var_date < min_Var_date:
+                min_Var_date = Var_date
+                result_tuple = timeline
+
+    else:
+        result_tuple = sorted_tuple[0 : min(abstract_size, len(sorted_tuple))]
+
+    result_tuple = sorted(result_tuple, key=lambda x: x[3])  # result_tuple按时间顺序排序
+
+    abstract = []
+    abstract_date = []
+    oracle_ids = []
+    for i in range(len(result_tuple)):
+        idx = result_tuple[i][0]
+        oracle_ids.append(idx)
+        abstract.append(doc_sent_list[idx])
+        abstract_date.append(doc_date_list[idx])
+
+    return abstract, abstract_date, oracle_ids
+
+
+def weak_supervision_selection_bak(
     doc_sent_list, doc_date_list, doc_page_list, doc_taxo_list, abstract_size
 ):
     # simple method sort first
     sort_tuple = sorted(
         tuple(zip(doc_page_list, range(len(doc_page_list)))), key=lambda x: x[0]
     )
-    # print(sort_tuple)
     abstract = []
     abstract_date = []
     oracle_ids = []
@@ -159,126 +229,121 @@ def weak_supervision_selection(
     return abstract, abstract_date, oracle_ids
 
 
-def datestr2datetime(date_str):
-    try:
-        date_str = date_str.split("T")[0]
-        return datetime.date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
-    except Exception as e:
-        print("date parse fail")
-        return datetime.date(1970, 1, 1)
-
-
-def cal_rouge_tls(doc_sent_list, doc_date_list, abstract_sent_list, abstract_date_list):
-    """
-    docstring
-    """
-
-    evaluator = rouge.TimelineRougeEvaluator(measures=["rouge_1", "rouge_2"])
-    doc_datetime_list = [datestr2datetime(date_str) for date_str in doc_date_list]
-    predicted_timeline = timelines.Timeline(dict(zip(doc_datetime_list, doc_sent_list)))
-    groundtruth = timelines.GroundTruth(
-        [timelines.Timeline(dict(zip(doc_datetime_list, doc_sent_list)))]
-    )
-    res_dict = evaluator.evaluate_concat(predicted_timeline, groundtruth)
-    return res_dict["rouge_1"]["f_score"], res_dict["rouge_2"]["f_score"]
-
-
 def combination_selection_tls(
     doc_sent_list, abstract_sent_list, doc_date_list, abstract_date_list, summary_size
 ):
-    def _rouge_clean(s):
-        return re.sub(r"[^a-zA-Z0-9 ]", "", s)
 
     max_rouge = 0.0
     max_idx = (0, 0)
     abstract_str_list = [_rouge_clean(" ".join(s)) for s in abstract_sent_list]
     abstract = sum(abstract_sent_list, [])
     abstract = _rouge_clean(" ".join(abstract)).split()
-    sent_str_list = [_rouge_clean(" ".join(s)) for s in doc_sent_list]
-    sents = [s.split() for s in sent_str_list]
-
-    # evaluated_1grams = [_get_word_ngrams(1, [sent]) for sent in sents]
-    # reference_1grams = _get_word_ngrams(1, [abstract])
-    # evaluated_2grams = [_get_word_ngrams(2, [sent]) for sent in sents]
-    # reference_2grams = _get_word_ngrams(2, [abstract])
+    sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
 
     impossible_sents = []
     for s in range(summary_size + 1):
         combinations = itertools.combinations(
-            [i for i in range(len(sents)) if i not in impossible_sents], s + 1
+            [i for i in range(len(sents_str_list)) if i not in impossible_sents], s + 1
         )
         for c in combinations:
-            # candidates_1 = [evaluated_1grams[idx] for idx in c]
-            # candidates_1 = set.union(*map(set, candidates_1))
-            # candidates_2 = [evaluated_2grams[idx] for idx in c]
-            # candidates_2 = set.union(*map(set, candidates_2))
-            sent_str_combination = [sent_str_list[idx] for idx in c]
-            # rouge_1 = cal_rouge(candidates_1, reference_1grams)["f"]
-            # rouge_2 = cal_rouge(candidates_2, reference_2grams)["f"]
+            sent_str_combination = [sents_str_list[idx] for idx in c]
+            sent_date_combination = [sents_date_list[idx] for idx in c]
             rouge_1, rouge_2 = cal_rouge_tls(
                 sent_str_combination,
-                doc_date_list,
+                sent_date_combination,
                 abstract_str_list,
                 abstract_date_list,
             )
 
-            rouge_score = rouge_1 + rouge_2
+            date_f1 = cal_date_f1(sent_date_combination, abstract_date_list)["f1"]
+            rouge_score = rouge_1 + rouge_2 + date_f1
             if s == 0 and rouge_score == 0:
                 impossible_sents.append(c[0])
             if rouge_score > max_rouge:
                 max_idx = c
                 max_rouge = rouge_score
-    return sorted(list(max_idx))
+    return sorted(list(max_idx)), sents_str_list, sents_date_list
 
 
 def greedy_selection_tls(
-    doc_sent_list, doc_date_list, abstract_sent_list, abstract_date_list, summary_size
+    doc_sent_list, abstract_sent_list, doc_date_list, abstract_date_list, summary_size
 ):
-    def _rouge_clean(s):
-        return re.sub(r"[^a-zA-Z0-9 ]", "", s)
 
     max_rouge = 0.0
     abstract_str_list = [_rouge_clean(" ".join(s)) for s in abstract_sent_list]
-    abstract = sum(abstract_sent_list, [])
-    abstract = _rouge_clean(" ".join(abstract)).split()
-    sent_str_list = [_rouge_clean(" ".join(s)) for s in doc_sent_list]
-    sents = [s.split() for s in sent_str_list]
-    # evaluated_1grams = [_get_word_ngrams(1, [sent]) for sent in sents]
-    # reference_1grams = _get_word_ngrams(1, [abstract])
-    # evaluated_2grams = [_get_word_ngrams(2, [sent]) for sent in sents]
-    # reference_2grams = _get_word_ngrams(2, [abstract])
+    sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
 
     selected = []
-    for s in range(summary_size):
+    for _ in range(summary_size):
         cur_max_rouge = max_rouge
         cur_id = -1
-        for i in range(len(sents)):
+        for i in range(len(sents_str_list)):
             if i in selected:
                 continue
             c = selected + [i]
-            sent_str_combination = [sent_str_list[idx] for idx in c]
-            # candidates_1 = [evaluated_1grams[idx] for idx in c]
-            # candidates_1 = set.union(*map(set, candidates_1))
-            # candidates_2 = [evaluated_2grams[idx] for idx in c]
-            # candidates_2 = set.union(*map(set, candidates_2))
-            # rouge_1 = cal_rouge(candidates_1, reference_1grams)["f"]
-            # rouge_2 = cal_rouge(candidates_2, reference_2grams)["f"]
+            sent_str_combination = [sents_str_list[idx] for idx in c]
+            sent_date_combination = [sents_date_list[idx] for idx in c]
             rouge_1, rouge_2 = cal_rouge_tls(
                 sent_str_combination,
-                doc_date_list,
+                sent_date_combination,
                 abstract_str_list,
                 abstract_date_list,
             )
-            rouge_score = rouge_1 + rouge_2
+            date_f1 = cal_date_f1(sent_date_combination, abstract_date_list)["f1"]
+            rouge_score = rouge_1 + rouge_2 + date_f1
             if rouge_score > cur_max_rouge:
                 cur_max_rouge = rouge_score
                 cur_id = i
         if cur_id == -1:
-            return selected
+            return selected, sents_str_list, sents_date_list
         selected.append(cur_id)
         max_rouge = cur_max_rouge
 
-    return sorted(selected)
+    return sorted(selected), sents_str_list, sents_date_list
+
+
+def random_greed_selection_tls(
+    doc_sent_list,
+    abstract_sent_list,
+    doc_date_list,
+    abstract_date_list,
+    summary_size,
+    random_size=20,
+):
+    max_rouge = 0.0
+    abstract_str_list = [_rouge_clean(" ".join(s)) for s in abstract_sent_list]
+    sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
+
+    selected = []
+    for _ in range(summary_size):
+        cur_max_rouge = max_rouge
+        cur_id = -1
+        print("sents", len(sents_str_list))
+        for _ in range(random_size):
+            i = int(random.random() * len(sents_str_list))
+            if i in selected:
+                continue
+            c = selected + [i]
+            sent_str_combination = [sents_str_list[idx] for idx in c]
+            sent_date_combination = [sents_date_list[idx] for idx in c]
+            rouge_1, rouge_2 = cal_rouge_tls(
+                sent_str_combination,
+                sent_date_combination,
+                abstract_str_list,
+                abstract_date_list,
+            )
+            date_f1 = cal_date_f1(sent_date_combination, abstract_date_list)["f1"]
+            print(rouge_1, rouge_2, date_f1)
+            rouge_score = rouge_1 + rouge_2 + date_f1
+            if rouge_score > cur_max_rouge:
+                cur_max_rouge = rouge_score
+                cur_id = i
+        if cur_id == -1:
+            return selected, sents_str_list, sents_date_list
+        selected.append(cur_id)
+        max_rouge = cur_max_rouge
+
+    return sorted(selected), sents_str_list, sents_date_list
 
 
 def hashhex(s):
@@ -322,8 +387,6 @@ class BertData:
             return None
 
         src_txt = [" ".join(sent) for sent in src]
-        # text = [' '.join(ex['src_txt'][i].split()[:self.args.max_src_ntokens]) for i in idxs]
-        # text = [_clean(t) for t in text]
         text = " [SEP] [CLS] ".join(src_txt)
         src_subtokens = self.tokenizer.tokenize(text)
         src_subtokens = src_subtokens[:510]
@@ -377,8 +440,6 @@ class BertData:
             return None
 
         src_txt = [" ".join(sent) for sent in src]
-        # text = [' '.join(ex['src_txt'][i].split()[:self.args.max_src_ntokens]) for i in idxs]
-        # text = [_clean(t) for t in text]
         text = " [SEP] [CLS] ".join(src_txt)
         src_subtokens = self.tokenizer.tokenize(text)
         src_subtokens = src_subtokens[:510]
@@ -546,25 +607,41 @@ def _format_to_bert_tls(params):
         if args.tls_mode == "pretrain":
             source, source_date = d["src"], d["time"]
             page, taxo = d["page"], d["taxo"]
-            # doc_sent_list, doc_date_list, doc_page_list, doc_taxo_list, abstract_size
             tgt, tgt_date, oracle_ids = weak_supervision_selection(
-                source, source_date, page, taxo, 3
+                source, source_date, page, taxo, params.tgt_size
             )
         elif args.tls_mode == "finetune":
             source, source_date, tgt, tgt_date = (
                 d["src"],
-                d["src_time"],
+                d["src_date"],
                 d["tgt"],
-                d["tgt_time"],
+                d["tgt_date"],
             )
+            if len(tgt) < 3 or len(source) < 3:
+                continue
+            print("tgt", len(tgt))
             if args.oracle_mode == "greedy":
-                oracle_ids = greedy_selection_tls(source, tgt, source_date, tgt_date, 3)
-            elif args.oracle_mode == "combination":
-                oracle_ids = combination_selection_tls(
+                oracle_ids, sents_str_list, sents_date_list = greedy_selection_tls(
                     source, tgt, source_date, tgt_date, 3
                 )
+            elif args.oracle_mode == "combination":
+                oracle_ids, sents_str_list, sents_date_list = combination_selection_tls(
+                    source, tgt, source_date, tgt_date, len(tgt)
+                )
+            elif args.oracle_mode == "random_greedy":
+                (
+                    oracle_ids,
+                    sents_str_list,
+                    sents_date_list,
+                ) = random_greed_selection_tls(
+                    source, tgt, source_date, tgt_date, summary_size=3, random_size=20
+                )
+        if len(source) == 0:
+            continue
 
-        b_data = bert.preprocess_tls(source, tgt, source_date, tgt_date, oracle_ids)
+        b_data = bert.preprocess_tls(
+            sents_str_list, tgt, sents_date_list, tgt_date, oracle_ids
+        )
         if b_data is None:
             continue
         (
@@ -584,6 +661,8 @@ def _format_to_bert_tls(params):
             "clss": cls_ids,
             "src_txt": src_txt,
             "tgt_txt": tgt_txt,
+            "src_date": src_date,
+            "tgt_date": tgt_date,
         }
         datasets.append(b_data_dict)
     logger.info("Saving to %s" % save_file)

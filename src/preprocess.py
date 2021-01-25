@@ -1,5 +1,6 @@
 # encoding=utf-8
 
+# TODO(sujinhua): sort the source text by date
 
 import argparse
 import time
@@ -44,18 +45,18 @@ if __name__ == "__main__":
         help="format_to_lines or format_to_bert",
     )
     parser.add_argument(
-        "-tls_mode", default="pretrain", type=str, help="pretrain or finetune or off"
+        "-tls_mode", default="finetune", type=str, help="pretrain or finetune or off"
     )
     parser.add_argument(
         "-oracle_mode",
-        default="greedy",
+        default="random_greedy",
         type=str,
-        help="how to generate oracle summaries, greedy or combination, combination will generate more accurate oracles but take much longer time.",
+        help="how to generate oracle summaries, greedy or combination or random_greedy, combination will generate more accurate oracles but take much longer time.",
     )
     parser.add_argument("-map_path", default="../data/")
     parser.add_argument(
         "-raw_path",
-        default="/data1/su/app/text_forecast/data/datasets/nyt_new%20structure/",
+        default="/data1/su/app/text_forecast/data/datasets/labeldata_new_structure/",
     )  # ../json_data/
     parser.add_argument("-save_path", default="../bert_data/")
 
