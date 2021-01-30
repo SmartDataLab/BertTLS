@@ -1,6 +1,5 @@
 # encoding=utf-8
 
-# TODO(sujinhua): sort the source text by date
 
 import argparse
 import time
@@ -61,10 +60,11 @@ if __name__ == "__main__":
     parser.add_argument("-save_path", default="../bert_data/")
 
     parser.add_argument("-shard_size", default=2000, type=int)
+    parser.add_argument("-tgt_size", default=10, type=int)
     parser.add_argument("-min_nsents", default=3, type=int)
     parser.add_argument("-max_nsents", default=100, type=int)
     parser.add_argument("-min_src_ntokens", default=5, type=int)
-    parser.add_argument("-max_src_ntokens", default=200, type=int)
+    parser.add_argument("-max_src_ntokens", default=20, type=int)
 
     parser.add_argument("-lower", type=str2bool, nargs="?", const=True, default=True)
 
@@ -77,6 +77,9 @@ if __name__ == "__main__":
     )
 
     parser.add_argument("-n_cpus", default=2, type=int)
+    parser.add_argument(
+        "-multi_tl", type=str2bool, nargs="?", const=True, default=False
+    )
 
     args = parser.parse_args()
     init_logger(args.log_file)

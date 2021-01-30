@@ -23,7 +23,8 @@ from others.logging import logger, init_logger
 from wheels.mongo_logger import Logger
 
 
-db_logger = Logger("news-tls", "acl_v0")
+db_logger = Logger("news-tls", "acl_v1")
+
 
 model_flags = [
     "hidden_size",
@@ -206,7 +207,7 @@ def validate(args, device_id, pt, step):
     config = BertConfig.from_json_file(args.bert_config_path)
     model = Summarizer(args, device, load_pretrained_bert=False, bert_config=config)
     model.load_cp(checkpoint)
-    model.eval()
+    # model.eval()
 
     valid_iter = data_loader.Dataloader(
         args,
@@ -244,7 +245,7 @@ def test(args, device_id, pt, step):
     config = BertConfig.from_json_file(args.bert_config_path)
     model = Summarizer(args, device, load_pretrained_bert=False, bert_config=config)
     model.load_cp(checkpoint)
-    model.eval()
+    # model.eval()
 
     test_iter = data_loader.Dataloader(
         args,
@@ -311,7 +312,12 @@ def train(args, device_id):
         checkpoint = torch.load(
             args.train_from, map_location=lambda storage, loc: storage
         )
-        opt = vars(checkpoint["opt"])
+        # opt = vars(checkpoint["opt"])
+        opt = (
+            vars(checkpoint["opt"])
+            if type(checkpoint["opt"]) != dict
+            else checkpoint["opt"]
+        )
         for k in opt.keys():
             if k in model_flags:
                 setattr(args, k, opt[k])
@@ -345,7 +351,7 @@ if __name__ == "__main__":
     parser.add_argument("-temp_dir", default="../temp/")
     parser.add_argument("-bert_config_path", default="../bert_config_uncased_base.json")
 
-    parser.add_argument("-batch_size", default=1000, type=int)
+    parser.add_argument("-batch_size", default=5, type=int)
 
     parser.add_argument(
         "-use_interval", type=str2bool, nargs="?", const=True, default=True
@@ -362,18 +368,18 @@ if __name__ == "__main__":
     )
     parser.add_argument("-dropout", default=0.1, type=float)
     parser.add_argument("-optim", default="adam", type=str)
-    parser.add_argument("-lr", default=1, type=float)
+    parser.add_argument("-lr", default=1e-4, type=float)
     parser.add_argument("-beta1", default=0.9, type=float)
     parser.add_argument("-beta2", default=0.999, type=float)
     parser.add_argument("-decay_method", default="", type=str)
     parser.add_argument("-warmup_steps", default=8000, type=int)
     parser.add_argument("-max_grad_norm", default=0, type=float)
 
-    parser.add_argument("-save_checkpoint_steps", default=100, type=int)
+    parser.add_argument("-save_checkpoint_steps", default=10000, type=int)
     parser.add_argument("-accum_count", default=1, type=int)
     parser.add_argument("-world_size", default=1, type=int)
     parser.add_argument("-report_every", default=1, type=int)
-    parser.add_argument("-train_steps", default=1000, type=int)
+    parser.add_argument("-train_steps", default=50000, type=int)
     parser.add_argument(
         "-recall_eval", type=str2bool, nargs="?", const=True, default=False
     )
@@ -396,6 +402,9 @@ if __name__ == "__main__":
         "-block_trigram", type=str2bool, nargs="?", const=True, default=True
     )
     parser.add_argument("-is_tls", type=str2bool, nargs="?", const=True, default=True)
+    parser.add_argument(
+        "-multi_tl", type=str2bool, nargs="?", const=True, default=False
+    )
 
     args = parser.parse_args()
     args_d = {key: value for key, value in args._get_kwargs()}

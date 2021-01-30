@@ -110,7 +110,6 @@ class Summarizer(nn.Module):
         self.load_state_dict(pt["model"], strict=True)
 
     def forward(self, x, segs, clss, mask, mask_cls, sentence_range=None):
-
         top_vec = self.bert(x, segs, mask)
         sents_vec = top_vec[torch.arange(top_vec.size(0)).unsqueeze(1), clss]
         sents_vec = sents_vec * mask_cls[:, :, None].float()

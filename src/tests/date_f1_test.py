@@ -2,8 +2,6 @@ import collections
 from others.utils import cal_date_f1
 import pytest  # 引入pytest包
 
-# TODO(sujinhua): ImportError: attempted relative import with no known parent package
-
 
 def test_count():  # test开头的测试函数
     pred_date = ["2017-12-09T20", "2017-12-09", "2017-12-10", "2017-12-12"]

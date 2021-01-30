@@ -1,0 +1,1 @@
+python ../src/preprocess.py -tls_mode finetune -raw_path /data1/su/app/text_forecast/data/datasets/labeldata_new_structure/ -dataset train -tgt_size 10

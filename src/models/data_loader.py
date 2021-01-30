@@ -193,7 +193,7 @@ class DataIterator(object):
         clss = ex["clss"]
         src_txt = ex["src_txt"]
         tgt_txt = ex["tgt_txt"]
-        if self.args.is_tls:
+        if self.args.is_tls and is_test:
             src_date = ex["src_date"]
             tgt_date = ex["tgt_date"]
 
@@ -247,6 +247,8 @@ class DataIterator(object):
                     continue
                 self.iterations += 1
                 self._iterations_this_epoch += 1
+                if len(minibatch) == 0:
+                    continue
                 batch = Batch(
                     minibatch, self.device, self.is_test, is_tls=self.args.is_tls
                 )

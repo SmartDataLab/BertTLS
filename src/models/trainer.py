@@ -10,7 +10,12 @@ import distributed
 from models.reporter import ReportMgr
 from models.stats import Statistics
 from others.logging import logger
-from others.utils import test_rouge, rouge_results_to_str, cal_rouge_tls
+from others.utils import test_rouge, rouge_results_to_str, cal_rouge_tls, cal_date_f1
+
+
+def get_clss_split(clss, msk_cls, start, end):
+    selector = (clss >= start) * (clss < end)
+    return (clss - start)[selector].unsqueeze(0), msk_cls[selector].unsqueeze(0)
 
 
 def _tally_parameters(model):
@@ -114,6 +119,7 @@ class Trainer(object):
         # Set model in training mode.
         if model:
             self.model.train()
+        print("log_id", self.args.db_logger.log_id)
 
     def train(self, train_iter_fct, train_steps, valid_iter_fct=None, valid_steps=-1):
         """
@@ -196,7 +202,7 @@ class Trainer(object):
             :obj:`nmt.Statistics`: validation loss statistics
         """
         # Set model in validating mode.
-        self.model.eval()
+        # self.model.eval()
         stats = Statistics()
 
         with torch.no_grad():
@@ -241,8 +247,8 @@ class Trainer(object):
                     return True
             return False
 
-        if not cal_lead and not cal_oracle:
-            self.model.eval()
+        # if not cal_lead and not cal_oracle:
+        #     self.model.eval()
         stats = Statistics()
 
         if is_tls:
@@ -280,18 +286,38 @@ class Trainer(object):
                                 for i in range(batch.batch_size)
                             ]
                         else:
-                            sent_scores, mask = self.model(
-                                src, segs, clss, mask, mask_cls
-                            )
-
+                            sent_scores_list = []
+                            mask_loss_list = []
+                            for i in range(segs.size()[1] // 512):
+                                start, end = i * 512, (i * 512 + 512)
+                                clss_, mask_cls_ = get_clss_split(
+                                    clss, mask_cls, start, end
+                                )
+                                tmp_score, mask_loss_tmp = self.model(
+                                    src[:, start:end, ...],
+                                    segs[:, start:end, ...],
+                                    clss_,
+                                    mask[:, start:end, ...],
+                                    mask_cls_,
+                                )
+                                print(i, tmp_score)
+                                sent_scores_list.append(tmp_score)
+                                mask_loss_list.append(mask_loss_tmp)
+                            if i == 0:
+                                sent_scores = sent_scores_list[0]
+                                mask_loss = mask_loss_list[0]
+                            else:
+                                sent_scores = torch.cat(sent_scores_list, dim=1)
+                                mask_loss = torch.cat(mask_loss_list, dim=1)
+                            # print(i, sent_scores, labels)
                             loss = self.loss(sent_scores, labels.float())
-                            loss = (loss * mask.float()).sum()
+                            loss = (loss * mask_loss.float()).sum()
                             batch_stats = Statistics(
                                 float(loss.cpu().data.numpy()), len(labels)
                             )
                             stats.update(batch_stats)
 
-                            sent_scores = sent_scores + mask.float()
+                            sent_scores = sent_scores + mask_loss.float()
                             sent_scores = sent_scores.cpu().data.numpy()
                             selected_ids = np.argsort(-sent_scores, 1)
                         # selected_ids = np.sort(selected_ids,1)
@@ -326,9 +352,13 @@ class Trainer(object):
 
                             if is_tls:
                                 rouge1, rouge2 = cal_rouge_tls(
-                                    _pred, _date, batch.tgt_str[i], tgt_date[i]
+                                    _pred,
+                                    _date,
+                                    batch.tgt_str[i].split("<q>"),
+                                    tgt_date[i],
                                 )
-                                tls_rouge_list.append((rouge1, rouge2))
+                                date_f1 = cal_date_f1(_date, tgt_date[i])["f1"]
+                                tls_rouge_list.append((rouge1, rouge2, date_f1))
                             else:
                                 _pred = "<q>".join(_pred)
                                 if self.args.recall_eval:
@@ -347,18 +377,20 @@ class Trainer(object):
             if is_tls:
                 rouge1_list = [x[0] for x in tls_rouge_list]
                 rouge2_list = [x[1] for x in tls_rouge_list]
+                date_f1_list = [x[2] for x in tls_rouge_list]
                 logger.info(
-                    "Rouges at step %d \n rouge1 : %s, rouge2: %s"
+                    "Rouges at step %d \n rouge1 : %s, rouge2: %s, date_f1: %s"
                     % (
                         step,
                         sum(rouge1_list) / len(tls_rouge_list),
                         sum(rouge2_list) / len(tls_rouge_list),
+                        sum(date_f1_list) / len(date_f1_list),
                     )
                 )
                 self.args.db_logger.add_attr("rouge1", rouge1_list, "test")
                 self.args.db_logger.add_attr("rouge2", rouge2_list, "test")
+                self.args.db_logger.add_attr("date_f1", date_f1_list, "test")
                 self.args.db_logger.insert_into_db("test")
-
             else:
                 rouges = test_rouge(self.args.temp_dir, can_path, gold_path)
                 logger.info(
@@ -385,13 +417,40 @@ class Trainer(object):
             mask = batch.mask
             mask_cls = batch.mask_cls
 
-            sent_scores, mask = self.model(src, segs, clss, mask, mask_cls)
+            sent_scores_list = []
+            mask_loss_list = []
+            count = 0
+            for _ in range(segs.size()[1] // 512):
 
+                start, end = count * 512, (count * 512 + 512)
+                clss_, mask_cls_ = get_clss_split(clss, mask_cls, start, end)
+                tmp_score, mask_loss_tmp = self.model(
+                    src[:, start:end, ...],
+                    segs[:, start:end, ...],
+                    clss_,
+                    mask[:, start:end, ...],
+                    mask_cls_,
+                )
+                sent_scores_list.append(tmp_score)
+                mask_loss_list.append(mask_loss_tmp)
+                count += 1
+            if count == 0:
+                return
+            elif count == 1:
+                sent_scores = sent_scores_list[0]
+                mask_loss = mask_loss_list[0]
+            else:
+                sent_scores = torch.cat(sent_scores_list, dim=1)
+                mask_loss = torch.cat(mask_loss_list, dim=1)
+            # sent_scores, mask = self.model(src, segs, clss, mask, mask_cls)
+
+            print("sent_score", sent_scores, "label", labels)
             loss = self.loss(sent_scores, labels.float())
-            loss = (loss * mask.float()).sum()
+            loss = (loss * mask_loss.float()).sum()
             (loss / loss.numel()).backward()
             # loss.div(float(normalization)).backward()
 
+            # TODO(sujinhua): save to db base
             batch_stats = Statistics(float(loss.cpu().data.numpy()), normalization)
 
             total_stats.update(batch_stats)
@@ -438,7 +497,15 @@ class Trainer(object):
             "opt": args_d,
             "optim": self.optim,
         }
-        checkpoint_path = os.path.join(self.args.model_path, "model_step_%d.pt" % step)
+        checkpoint_path = os.path.join(
+            self.args.model_path,
+            "%s_model_%s_step_%d.pt"
+            % (
+                self.args.bert_data_path.split("/")[-1],
+                self.args.db_logger.log_id,
+                step,
+            ),
+        )
         logger.info("Saving checkpoint %s" % checkpoint_path)
         # checkpoint_path = '%s_step_%d.pt' % (FLAGS.model_path, step)
         if not os.path.exists(checkpoint_path):

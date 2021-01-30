@@ -22,7 +22,7 @@ class Classifier(nn.Module):
 class PositionalEncoding(nn.Module):  # 位置编码
     def __init__(
         self, dropout, dim, max_len=5000
-    ):  # TODO(Li Yihong): craete a new class similiar to this structure. date embedding
+    ):  # TODO(sujinhua): save some data and make a test on it
         pe = torch.zeros(max_len, dim)  # 最大长度*维度的0矩阵 dim == hidden_size(bert) 512
         position = torch.arange(0, max_len).unsqueeze(1)  # 返回maxlen*1维序列张量
         div_term = torch.exp(
@@ -52,17 +52,15 @@ class PositionalEncoding(nn.Module):  # 位置编码
     def get_emb(self, emb):
         return self.pe[:, : emb.size(1)]
 
-    
+
 class TimeEncoding(nn.Module):  # 时间编码（版本1）
     """
     我感觉时间数据并不适合在embedding的时候进行处理，因为position是对输入embedding的一句话进行编码，而且计算的是各字词的相对位置，
     但是时间数据一句话只有一个对应的时间点，并不适合要采取类似的处理，更适合把时间数据单独弄成一块，用一层单独处理，也就是版本二的方法
     所以我觉得这个版本可以弃了= =
     """
-    
-    def __init__(
-        self, dropout, dim, max_len=5000
-    ): 
+
+    def __init__(self, dropout, dim, max_len=5000):
         pe = torch.zeros(max_len, dim)  # 最大长度*维度的0矩阵
         position = torch.arange(0, max_len).unsqueeze(1)  # 返回maxlen*1维序列张量
         div_term = torch.exp(
@@ -88,45 +86,38 @@ class TimeEncoding(nn.Module):  # 时间编码（版本1）
             emb = emb + self.pe[:, : emb.size(1)]
         emb = self.dropout(emb)
         return emb
-    
+
     def get_emb(self, emb):
         return self.pe[:, : emb.size(1)]
-    
-    
-class T2V(Layer):#时间编码(版本二) 这个版本应该是自定义了一个层，在最后构建模型的时候才加入的，语雀文档里还有一个tensorflow版
-    
+
+
+class T2V(nn.Module):  # 时间编码(版本二) 这个版本应该是自定义了一个层，在最后构建模型的时候才加入的，语雀文档里还有一个tensorflow版
     def __init__(self, output_dim=None, **kwargs):
         self.output_dim = output_dim
         super(T2V, self).__init__(**kwargs)
-        
+
     def build(self, input_shape):
-        self.W = self.add_weight(name='W',
-                                shape=(1, self.output_dim),
-                                initializer='uniform',
-                                trainable=True)
-        self.P = self.add_weight(name='P',
-                                shape=(1, self.output_dim),
-                                initializer='uniform',
-                                trainable=True)
-        self.w = self.add_weight(name='w',
-                                shape=(1, 1),
-                                initializer='uniform',
-                                trainable=True)
-        self.p = self.add_weight(name='p',
-                                shape=(1, 1),
-                                initializer='uniform',
-                                trainable=True)
+        self.W = self.add_weight(
+            name="W", shape=(1, self.output_dim), initializer="uniform", trainable=True
+        )
+        self.P = self.add_weight(
+            name="P", shape=(1, self.output_dim), initializer="uniform", trainable=True
+        )
+        self.w = self.add_weight(
+            name="w", shape=(1, 1), initializer="uniform", trainable=True
+        )
+        self.p = self.add_weight(
+            name="p", shape=(1, 1), initializer="uniform", trainable=True
+        )
         super(T2V, self).build(input_shape)
-        
+
     def call(self, x):
-        
+
         original = self.w * x + self.p
         sin_trans = K.sin(K.dot(x, self.W) + self.P)
-        
-        return K.concatenate([sin_trans, original], -1)    
-    
-    
- 
+
+        return K.concatenate([sin_trans, original], -1)
+
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(self, d_model, heads, d_ff, dropout):
@@ -176,7 +167,7 @@ class TransformerInterEncoder(nn.Module):
 
         for i in range(self.num_inter_layers):
             x = self.transformer_inter[i](
-                i, x, x, 1 - mask
+                i, x, x, ~mask
             )  # all_sents * max_tokens * dim
 
         x = self.layer_norm(x)
@@ -206,7 +197,9 @@ class RNNEncoder(nn.Module):
 
     def forward(self, x, mask):
         """See :func:`EncoderBase.forward()`"""
+        print("before transpose", x.size())
         x = torch.transpose(x, 1, 0)
+        print("after transpose", x.size())
         memory_bank, _ = self.rnn(x)
         memory_bank = self.dropout(memory_bank) + x
         memory_bank = torch.transpose(memory_bank, 1, 0)

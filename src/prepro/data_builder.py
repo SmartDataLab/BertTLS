@@ -20,6 +20,9 @@ from others.utils import (
     cal_date_f1,
     _rouge_clean,
     _process_source,
+    _rm_blank,
+    _sent2token,
+    taxostat_distance,
 )
 from prepro.utils import _get_word_ngrams
 
@@ -156,7 +159,7 @@ def weak_supervision_selection(
     doc_sent_list,
     doc_date_list,
     doc_page_list,
-    doc_taxoscore_list,
+    doc_taxo_list,
     abstract_size=8,
     page_weight=1,
     taxo_weight=10,
@@ -164,6 +167,7 @@ def weak_supervision_selection(
     date_size=2,
 ):
 
+    doc_taxoscore_list = taxostat_distance(doc_taxo_list)
     origin_tuple = tuple(
         zip(range(len(doc_page_list)), doc_page_list, doc_taxoscore_list, doc_date_list)
     )
@@ -235,7 +239,9 @@ def combination_selection_tls(
 
     max_rouge = 0.0
     max_idx = (0, 0)
-    abstract_str_list = [_rouge_clean(" ".join(s)) for s in abstract_sent_list]
+    abstract_str_list = [
+        _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
+    ]
     abstract = sum(abstract_sent_list, [])
     abstract = _rouge_clean(" ".join(abstract)).split()
     sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
@@ -246,7 +252,7 @@ def combination_selection_tls(
             [i for i in range(len(sents_str_list)) if i not in impossible_sents], s + 1
         )
         for c in combinations:
-            sent_str_combination = [sents_str_list[idx] for idx in c]
+            sent_str_combination = [_rm_blank(sents_str_list[idx]) for idx in c]
             sent_date_combination = [sents_date_list[idx] for idx in c]
             rouge_1, rouge_2 = cal_rouge_tls(
                 sent_str_combination,
@@ -270,7 +276,9 @@ def greedy_selection_tls(
 ):
 
     max_rouge = 0.0
-    abstract_str_list = [_rouge_clean(" ".join(s)) for s in abstract_sent_list]
+    abstract_str_list = [
+        _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
+    ]
     sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
 
     selected = []
@@ -278,10 +286,10 @@ def greedy_selection_tls(
         cur_max_rouge = max_rouge
         cur_id = -1
         for i in range(len(sents_str_list)):
-            if i in selected:
+            if i in selected or len(_rm_blank(sents_str_list[i])) == 0:
                 continue
             c = selected + [i]
-            sent_str_combination = [sents_str_list[idx] for idx in c]
+            sent_str_combination = [_rm_blank(sents_str_list[idx]) for idx in c]
             sent_date_combination = [sents_date_list[idx] for idx in c]
             rouge_1, rouge_2 = cal_rouge_tls(
                 sent_str_combination,
@@ -309,9 +317,19 @@ def random_greed_selection_tls(
     abstract_date_list,
     summary_size,
     random_size=20,
+    multi_tl=False,
 ):
+    # TODO(sujinhua): why output for entites only three
     max_rouge = 0.0
-    abstract_str_list = [_rouge_clean(" ".join(s)) for s in abstract_sent_list]
+    if multi_tl:
+        abstract_str_list = [
+            [_rm_blank(_rouge_clean(" ".join(s))) for s in one_sent_list]
+            for one_sent_list in abstract_sent_list
+        ]
+    else:
+        abstract_str_list = [
+            _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
+        ]
     sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
 
     selected = []
@@ -321,18 +339,22 @@ def random_greed_selection_tls(
         print("sents", len(sents_str_list))
         for _ in range(random_size):
             i = int(random.random() * len(sents_str_list))
-            if i in selected:
+            if i in selected or len(_rm_blank(sents_str_list[i])) == 0:
                 continue
             c = selected + [i]
-            sent_str_combination = [sents_str_list[idx] for idx in c]
+            sent_str_combination = [_rm_blank(sents_str_list[idx]) for idx in c]
             sent_date_combination = [sents_date_list[idx] for idx in c]
-            rouge_1, rouge_2 = cal_rouge_tls(
+            rouge_1, rouge_2 = cal_rouge_tls(  # TODO(multi_tl)
                 sent_str_combination,
                 sent_date_combination,
                 abstract_str_list,
                 abstract_date_list,
+                mode="cat",
+                multi_tl=multi_tl,
             )
-            date_f1 = cal_date_f1(sent_date_combination, abstract_date_list)["f1"]
+            date_f1 = cal_date_f1(  # TODO(multi_tl)
+                sent_date_combination, abstract_date_list, multi_tl=multi_tl
+            )["f1"]
             print(rouge_1, rouge_2, date_f1)
             rouge_score = rouge_1 + rouge_2 + date_f1
             if rouge_score > cur_max_rouge:
@@ -346,6 +368,10 @@ def random_greed_selection_tls(
     return sorted(selected), sents_str_list, sents_date_list
 
 
+#%%
+
+
+#%%
 def hashhex(s):
     """Returns a heximal formated SHA1 hash of the input string."""
     h = hashlib.sha1()
@@ -415,7 +441,7 @@ class BertData:
             tgt_txt,
         )
 
-    def preprocess_tls(self, src, tgt, src_date, tgt_date, oracle_ids):
+    def preprocess_tls(self, src, tgt, src_date, tgt_date, oracle_ids, multi_tl=False):
 
         if len(src) == 0:
             return None
@@ -427,7 +453,6 @@ class BertData:
             labels[l] = 1
 
         idxs = [i for i, s in enumerate(src) if (len(s) > self.args.min_src_ntokens)]
-
         src = [src[i][: self.args.max_src_ntokens] for i in idxs]
         labels = [labels[i] for i in idxs]
         src = src[: self.args.max_nsents]
@@ -442,7 +467,12 @@ class BertData:
         src_txt = [" ".join(sent) for sent in src]
         text = " [SEP] [CLS] ".join(src_txt)
         src_subtokens = self.tokenizer.tokenize(text)
-        src_subtokens = src_subtokens[:510]
+        # src_subtokens = src_subtokens[:510]
+        if len(src_subtokens) < 510:
+            src_subtokens += ["[PAD]"] * (510 - len(src_subtokens))
+        else:
+            truncate_point = (len(src_subtokens) // 512) * 512 - 2
+            src_subtokens = src_subtokens[:truncate_point]
         src_subtokens = ["[CLS]"] + src_subtokens + ["[SEP]"]
 
         src_subtoken_idxs = self.tokenizer.convert_tokens_to_ids(src_subtokens)
@@ -605,10 +635,10 @@ def _format_to_bert_tls(params):
     datasets = []
     for d in jobs:
         if args.tls_mode == "pretrain":
-            source, source_date = d["src"], d["time"]
+            source, sents_date_list = d["src"], d["time"]
             page, taxo = d["page"], d["taxo"]
             tgt, tgt_date, oracle_ids = weak_supervision_selection(
-                source, source_date, page, taxo, params.tgt_size
+                source, sents_date_list, page, taxo, args.tgt_size
             )
         elif args.tls_mode == "finetune":
             source, source_date, tgt, tgt_date = (
@@ -617,30 +647,41 @@ def _format_to_bert_tls(params):
                 d["tgt"],
                 d["tgt_date"],
             )
-            if len(tgt) < 3 or len(source) < 3:
-                continue
+            if args.multi_tl:
+                if sum([len(one) for one in tgt]) < 3 or len(source) < 3:
+                    continue
+            else:
+                if len(tgt) < 3 or len(source) < 3:
+                    continue
             print("tgt", len(tgt))
             if args.oracle_mode == "greedy":
                 oracle_ids, sents_str_list, sents_date_list = greedy_selection_tls(
-                    source, tgt, source_date, tgt_date, 3
-                )
+                    source, tgt, source_date, tgt_date, 3, multi_tl=args.multi_tl
+                )  # TODO(multi_tl)
             elif args.oracle_mode == "combination":
                 oracle_ids, sents_str_list, sents_date_list = combination_selection_tls(
-                    source, tgt, source_date, tgt_date, len(tgt)
-                )
+                    source, tgt, source_date, tgt_date, len(tgt), multi_tl=args.multi_tl
+                )  # TODO(multi_tl)
             elif args.oracle_mode == "random_greedy":
                 (
                     oracle_ids,
                     sents_str_list,
                     sents_date_list,
                 ) = random_greed_selection_tls(
-                    source, tgt, source_date, tgt_date, summary_size=3, random_size=20
-                )
+                    source,
+                    tgt,
+                    source_date,
+                    tgt_date,
+                    summary_size=args.tgt_size,
+                    random_size=20,
+                    multi_tl=args.multi_tl,
+                )  # TODO(multi_tl)
+            source = _sent2token(sents_str_list)
         if len(source) == 0:
             continue
-
+        # TODO(multi_tl)
         b_data = bert.preprocess_tls(
-            sents_str_list, tgt, sents_date_list, tgt_date, oracle_ids
+            source, tgt, sents_date_list, tgt_date, oracle_ids, multi_tl=args.multi_tl
         )
         if b_data is None:
             continue
