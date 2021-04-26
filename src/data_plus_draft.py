@@ -151,3 +151,7 @@ for c in ranked_clusters:
 # %%
 list(ranked_clusters)[0].articles[0].sentences[0].new_attr
 # %%
+col
+# %%
+tl = col.timelines[0]
+# %%

@@ -17,6 +17,7 @@ from others.logging import logger
 from others.utils import (
     clean,
     cal_rouge_tls,
+    cal_rouge_tls_given,
     cal_date_f1,
     _rouge_clean,
     _process_source,
@@ -337,60 +338,54 @@ def greedy_selection_tls(
 
 
 def random_greed_selection_tls(
-    doc_sent_list,
-    abstract_sent_list,
-    doc_date_list,
-    abstract_date_list,
-    summary_size,
-    random_size=20,
+    ranked_clusters, # collection of articles
+    timelines,
+    summary_size, # change_summary_size to 3
+    random_size=20, # change this to 50 to make more to be look up
     multi_tl=False,
 ):
     max_rouge = 0.0
-    if multi_tl:
-        abstract_str_list = [
-            [_rm_blank(_rouge_clean(" ".join(s))) for s in one_sent_list]
-            for one_sent_list in abstract_sent_list
-        ]
-    else:
-        abstract_str_list = [
-            _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
-        ]
     sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
+    # TODO: using this for processing of d
 
     selected = []
     for _ in range(summary_size):
         cur_max_rouge = max_rouge
         cur_id = -1
-        print("sents", len(sents_str_list))
         for _ in range(random_size):
-            i = int(random.random() * len(sents_str_list))
-            if i in selected or len(_rm_blank(sents_str_list[i])) == 0:
+            i = int(random.random() * len(ranked_clusters))
+            j = int(random.random() * len(ranked_clusters[i]))
+            a = ranked_clusters[i].ariticles[j]
+            id_ = a.id
+            if i in selected:
                 continue
-            c = selected + [i]
-            sent_str_combination = [_rm_blank(sents_str_list[idx]) for idx in c]
-            sent_date_combination = [sents_date_list[idx] for idx in c]
-            rouge_1, rouge_2 = cal_rouge_tls(
+            c = selected + [(i,j,id_)]
+            sent_str_combination = [_rm_blank(_rouge_clean(ranked_clusters[i].ariticles[j].text)) for idx_i, idx_j, idx_id in c]
+            sent_date_combination = [ranked_clusters[i].ariticles[j].time for idx_i, idx_j, idx_id in c]
+            rouge_1, rouge_2 = cal_rouge_tls_given(
                 sent_str_combination,
                 sent_date_combination,
-                abstract_str_list,
-                abstract_date_list,
+                timelines,
                 mode="cat",
                 multi_tl=multi_tl,
             )
+            tmp = [["%s-%s-%s" % (one.year, one.month, one.day) for one in one_tl.times] for one_tl in timelines]
+            if not multi_tl:
+                tmp = tmp[0]
             date_f1 = cal_date_f1(
-                sent_date_combination, abstract_date_list, multi_tl=multi_tl
+                ["%s-%s-%s" % (one.year, one.month, one.day) for one in sent_date_combination], tmp, multi_tl=multi_tl
             )["f1"]
             print(rouge_1, rouge_2, date_f1)
             rouge_score = rouge_1 + rouge_2 + date_f1
             if rouge_score > cur_max_rouge:
                 cur_max_rouge = rouge_score
-                cur_id = i
+                cur_id = (i,j,id_)
         if cur_id == -1:
             return selected, sents_str_list, sents_date_list
         selected.append(cur_id)
         max_rouge = cur_max_rouge
 
-    return sorted(selected), sents_str_list, sents_date_list
+    return sorted(selected, key=lambda x:x[-1])
 
 
 def independent_greedy_selection_tls(
@@ -519,20 +514,60 @@ class BertData:
             tgt_txt,
         )
 
-    def preprocess_tls(self, src, tgt, src_date, tgt_date, oracle_ids, multi_tl=False):
+        # b_data = bert.preprocess_tls(
+        #     ranked_clusters, ranked_dates, oracle_ids, multi_tl=args.multi_tl
+        # )
+
+    def preprocess_tls(self, ranked_clusters, ranked_dates, timelines, oracle_ids, multi_tl=False):
+        # TODO: there may be a col as input, add the detail to attribute to the res
+        # oracle_ids search, article
 
         if len(src) == 0:
             return None
 
-        print(oracle_ids, len(src))
-        original_src_txt = [" ".join(s) for s in src]
+        original_src_txt = []
+        src = []
+        src_date = []
+        labels = []
+        date_rank = []
+        clust_rank = []
+        idx_selected = [id_ for i,j,id_ in oracle_ids]
+        for rank,c in enumerate(ranked_clusters):
+            for a in c.articles:
+                if a.id in idx_selected:
+                    labels += [1] * len(a.sentences)
+                else:
+                    labels += [0] * len(a.sentences)
+                clust_rank += [rank] * len(a.sentences)
+                for s in a.sentences:
+                    tmp_text = _rm_blank(_rouge_clean(s.raw))
+                    original_src_txt += [tmp_text]
+                    tmp_date = s.time if s.time else a.time
+                    try:
+                        rank2 = ranked_dates.index(date(tmp_date.year, tmp_date.month, tmp_date.day))
+                    except:
+                        rank2 = -1
+                    date_rank += [rank2]
+                    src_date+= ["%s-%s-%s" % (tmp_date.year, tmp_date.month, tmp_date.day)]
 
-        labels = [0] * len(src)
-        for l in oracle_ids:
-            labels[l] = 1
+        tgt = []
+        tgt_date = []
+        for tl in timelines:
+            one_tl_tgt = []
+            one_tl_date = []
+            for date_key, value_list in tl.date_to_summaries.items():
+                one_tl_date += ["%s-%s-%s" % (date_key.year, date_key.month, date_key.day)]
+                one_tl_tgt += value_list
+            tgt.append(one_tl_tgt)
+            tgt_date.append(one_tl_date)
+        if len(tgt) == 1:
+            tgt = tgt[0]
+        if len(tgt_date) == 1:
+            tgt = tgt_date[0]
 
         idxs = [i for i, s in enumerate(src) if (len(s) > self.args.min_src_ntokens)]
         src = [src[i][: self.args.max_src_ntokens] for i in idxs]
+        # TODO: truncate
         labels = [labels[i] for i in idxs]
         src = src[: self.args.max_nsents]
         labels = labels[: self.args.max_nsents]
@@ -584,36 +619,40 @@ class BertData:
             tgt_txt,
             src_date,
             tgt_date,
+            idf_info,
+            date_rank,
+            clust_rank
         )
 
 
 def format_to_bert(args):
-    if args.dataset != "":
-        datasets = [args.dataset]
-    else:
-        datasets = ["train", "valid", "test"]
-    for corpus_type in datasets:
-        a_lst = []
-        for json_f in glob.glob(pjoin(args.raw_path, "*" + corpus_type + ".*.json")):
-            real_name = json_f.split("/")[-1]
-            if args.oracle_mode == "independent_greedy":
-                real_name = (
-                    real_name.split(".")[0] + "3." + ".".join(real_name.split(".")[1:])
-                )
-            a_lst.append(
-                (
-                    json_f,
-                    args,
-                    pjoin(args.save_path, real_name.replace("json", "bert.pt")),
-                )
-            )
-            print(json_f)
-            param = (
-                json_f,
-                args,
-                pjoin(args.save_path, real_name.replace("json", "bert.pt")),
-            )
-            _format_to_bert_tls(param)
+    # if args.dataset != "":
+    #     datasets = [args.dataset]
+    # else:
+    #     datasets = ["train", "valid", "test"]
+    _format_to_bert_tls(args)
+    # for corpus_type in datasets:
+    #     a_lst = []
+    #     for json_f in glob.glob(pjoin(args.raw_path, "*" + corpus_type + ".*.json")):
+    #         real_name = json_f.split("/")[-1]
+    #         if args.oracle_mode == "independent_greedy":
+    #             real_name = (
+    #                 real_name.split(".")[0] + "3." + ".".join(real_name.split(".")[1:])
+    #             )
+    #         a_lst.append(
+    #             (
+    #                 json_f,
+    #                 args,
+    #                 pjoin(args.save_path, real_name.replace("json", "bert.pt")),
+    #             )
+    #         )
+    #         print(json_f)
+    #         param = (
+    #             json_f,
+    #             args,
+    #             pjoin(args.save_path, real_name.replace("json", "bert.pt")),
+    #         )
+    #         _format_to_bert_tls(param)
         # pool = Pool(args.n_cpus)
         # imap_fun = (
         #     _format_to_bert_tls
@@ -713,20 +752,55 @@ def _format_to_bert(params):
 
 
 import news_tls.data import Dataset
+from news_tls.datewise import MentionCountDateRanker, PM_Mean_SentenceCollector
+from news_tls.clust import TemporalMarkovClusterer, ClusterDateMentionCountRanker
+from sklearn.feature_extraction.text import TfidfVectorizer
+from datetime import date
 
-def _format_to_bert_tls(params):
-    json_file, args, save_file = params
+def _format_to_bert_tls(args):
+    # json_file, args, save_file = params
     # if os.path.exists(save_file):
     #     logger.info("Ignore %s" % save_file)
     #     return
 
+    # TODO: there need two params
+    # dataset_path = /data1/su/app/text_forecast/data/datasets/entities/
+    
     bert = BertData(args)
 
-    logger.info("Processing %s" % json_file)
-    jobs = json.load(open(json_file))
+    # logger.info("Processing %s" % json_file)
+    # jobs = json.load(open(json_file))
+    jobs = Dataset(args.dataset_path)
+
     
     datasets = []
-    for d in jobs:
+    for d in jobs.collections:
+        times=[]
+        fit_input_sent = []
+        fit_input_doc = []
+        for a in d.articles():
+            times.append(a.time)
+            tmp = []
+            for s in a.sentences:
+                tmp.append(s.raw)
+            fit_input_sent += tmp
+            fit_input_doc.append(" ".join(tmp))
+        d.start = min(times)
+        d.end = max(times)
+
+        sent_vectorizer = TfidfVectorizer(lowercase=True, stop_words="english")
+        doc_vectorizer = TfidfVectorizer(lowercase=True, stop_words="english")
+        sent_vectorizer.fit(fit_input_sent)
+        doc_vectorizer.fit(fit_input_doc)
+
+        date_ranker = MentionCountDateRanker()
+        ranked_dates = date_ranker.rank_dates(d)
+        
+        clusterer = TemporalMarkovClusterer() 
+        cluster_ranker = ClusterDateMentionCountRanker()
+        clusters = clusterer.cluster(col, doc_vectorizer)
+        ranked_clusters = cluster_ranker.rank(clusters, d)
+
         if args.tls_mode == "pretrain":
             source, sents_date_list = d["src"], d["time"]
             page, taxo = d["page"], d["taxo"]
@@ -734,19 +808,6 @@ def _format_to_bert_tls(params):
                 source, sents_date_list, page, taxo, args.tgt_size
             )
         elif args.tls_mode == "finetune":
-            source, source_date, tgt, tgt_date = (
-                d["src"],
-                d["src_date"],
-                d["tgt"],
-                d["tgt_date"],
-            )
-            if args.multi_tl:
-                if sum([len(one) for one in tgt]) < 3 or len(source) < 3:
-                    continue
-            else:
-                if len(tgt) < 3 or len(source) < 3:
-                    continue
-            print("tgt", len(tgt))
             if args.oracle_mode == "greedy":
                 oracle_ids, sents_str_list, sents_date_list = greedy_selection_tls(
                     source, tgt, source_date, tgt_date, 3, multi_tl=args.multi_tl
@@ -756,17 +817,11 @@ def _format_to_bert_tls(params):
                     source, tgt, source_date, tgt_date, len(tgt), multi_tl=args.multi_tl
                 )
             elif args.oracle_mode == "random_greedy":
-                (
-                    oracle_ids,
-                    sents_str_list,
-                    sents_date_list,
-                ) = random_greed_selection_tls(
-                    source,
-                    tgt,
-                    source_date,
-                    tgt_date,
-                    summary_size=args.tgt_size,
-                    random_size=10,
+                oracle_ids = random_greed_selection_tls(
+                    ranked_clusters,
+                    d.timelines,
+                    summary_size=10,
+                    random_size=20,
                     multi_tl=args.multi_tl,
                 )
             elif args.oracle_mode == "independent_greedy":
@@ -784,13 +839,13 @@ def _format_to_bert_tls(params):
                     multi_tl=args.multi_tl,
                 )
 
-            source = _sent2token(sents_str_list)
+            source = _sent2token(sents_str_list) # 其实是在分词
         if len(source) == 0:
             continue
-        print("source", source)
+        # print("source", source)
         # TODO: add tf-idf matrix and make it into bertdata, notice should add the last in the data loader and change the i
         b_data = bert.preprocess_tls(
-            source, tgt, sents_date_list, tgt_date, oracle_ids, multi_tl=args.multi_tl
+            ranked_clusters, ranked_dates, d.timelines, oracle_ids, multi_tl=args.multi_tl
         )
         if b_data is None:
             continue
@@ -803,6 +858,9 @@ def _format_to_bert_tls(params):
             tgt_txt,
             src_date,
             tgt_date,
+            idf_info,
+            date_rank,
+            clust_rank
         ) = b_data
         print(labels)
         b_data_dict = {
@@ -814,6 +872,9 @@ def _format_to_bert_tls(params):
             "tgt_txt": tgt_txt,
             "src_date": src_date,
             "tgt_date": tgt_date,
+            "idf_info": idf_info,
+            "date_rank": date_rank,
+            "clust_rank": clust_rank
         }
         datasets.append(b_data_dict)
     logger.info("Saving to %s" % save_file)

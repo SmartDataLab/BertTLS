@@ -187,6 +187,33 @@ def cal_rouge_tls(
     return res_dict["rouge_1"]["f_score"], res_dict["rouge_2"]["f_score"]
 
 
+def cal_rouge_tls_given(
+    doc_sent_list,
+    doc_date_list,
+    timelines_list,
+    mode="date",
+    multi_tl=False,
+):
+    """
+    docstring
+    """
+    evaluator = rouge.TimelineRougeEvaluator(
+        measures=["rouge_1", "rouge_2"], rouge_computation="original"
+    )
+    doc_datetime_list = [date for date in doc_date_list]
+    predicted_timeline = timelines.Timeline(
+        get_dict_for_tl(doc_sent_list, doc_datetime_list)
+    )
+    groundtruth = timelines.GroundTruth(timelines_list)
+    if mode == "cat":
+        res_dict = evaluator.evaluate_concat(predicted_timeline, groundtruth)
+    elif mode == "date":
+        res_dict = evaluator.evaluate_align_date_content_costs(
+            predicted_timeline, groundtruth
+        )
+    return res_dict["rouge_1"]["f_score"], res_dict["rouge_2"]["f_score"]
+
+
 def date_truncate(x):
     if x and len(x) > 10:
         return x[:10]

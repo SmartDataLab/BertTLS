@@ -57,8 +57,12 @@ if __name__ == "__main__":
         "-raw_path",
         default="/data1/su/app/text_forecast/data/datasets/labeldata_new_structure/",
     )  # ../json_data/
+    parser.add_argument(
+        "-dataset_path",
+        default="/data1/su/app/text_forecast/data/datasets/entities/",
+    )  # ../json_data/
     parser.add_argument("-save_path", default="../bert_data/")
-
+    parser.add_argument("-test_names_file", default="../bert_data/")
     parser.add_argument("-shard_size", default=2000, type=int)
     parser.add_argument("-tgt_size", default=10, type=int)
     parser.add_argument("-doc_max_size", default=3, type=int)
