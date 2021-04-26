@@ -12,7 +12,7 @@ from os.path import join as pjoin
 import torch
 from multiprocess import Pool
 from pytorch_pretrained_bert import BertTokenizer
-
+from tqdm import tqdm
 from others.logging import logger
 from others.utils import (
     clean,
@@ -33,8 +33,6 @@ from tilse.evaluation import rouge
 import math
 import numpy as np
 import random
-
-# TODO(sujinhua): use HeidelTime to get date from timeline
 
 
 def load_json(p, lower):
@@ -234,14 +232,25 @@ def weak_supervision_selection_bak(
 
 
 def combination_selection_tls(
-    doc_sent_list, abstract_sent_list, doc_date_list, abstract_date_list, summary_size
+    doc_sent_list,
+    abstract_sent_list,
+    doc_date_list,
+    abstract_date_list,
+    summary_size,
+    multi_tl=False,
 ):
 
     max_rouge = 0.0
     max_idx = (0, 0)
-    abstract_str_list = [
-        _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
-    ]
+    if multi_tl:
+        abstract_str_list = [
+            [_rm_blank(_rouge_clean(" ".join(s))) for s in one_sent_list]
+            for one_sent_list in abstract_sent_list
+        ]
+    else:
+        abstract_str_list = [
+            _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
+        ]
     abstract = sum(abstract_sent_list, [])
     abstract = _rouge_clean(" ".join(abstract)).split()
     sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
@@ -259,9 +268,12 @@ def combination_selection_tls(
                 sent_date_combination,
                 abstract_str_list,
                 abstract_date_list,
+                multi_tl=multi_tl,
             )
 
-            date_f1 = cal_date_f1(sent_date_combination, abstract_date_list)["f1"]
+            date_f1 = cal_date_f1(
+                sent_date_combination, abstract_date_list, multi_tl=multi_tl
+            )["f1"]
             rouge_score = rouge_1 + rouge_2 + date_f1
             if s == 0 and rouge_score == 0:
                 impossible_sents.append(c[0])
@@ -272,13 +284,24 @@ def combination_selection_tls(
 
 
 def greedy_selection_tls(
-    doc_sent_list, abstract_sent_list, doc_date_list, abstract_date_list, summary_size
+    doc_sent_list,
+    abstract_sent_list,
+    doc_date_list,
+    abstract_date_list,
+    summary_size,
+    multi_tl=False,
 ):
 
     max_rouge = 0.0
-    abstract_str_list = [
-        _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
-    ]
+    if multi_tl:
+        abstract_str_list = [
+            [_rm_blank(_rouge_clean(" ".join(s))) for s in one_sent_list]
+            for one_sent_list in abstract_sent_list
+        ]
+    else:
+        abstract_str_list = [
+            _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
+        ]
     sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
 
     selected = []
@@ -296,8 +319,11 @@ def greedy_selection_tls(
                 sent_date_combination,
                 abstract_str_list,
                 abstract_date_list,
+                multi_tl=multi_tl,
             )
-            date_f1 = cal_date_f1(sent_date_combination, abstract_date_list)["f1"]
+            date_f1 = cal_date_f1(
+                sent_date_combination, abstract_date_list, multi_tl=multi_tl
+            )["f1"]
             rouge_score = rouge_1 + rouge_2 + date_f1
             if rouge_score > cur_max_rouge:
                 cur_max_rouge = rouge_score
@@ -319,7 +345,6 @@ def random_greed_selection_tls(
     random_size=20,
     multi_tl=False,
 ):
-    # TODO(sujinhua): why output for entites only three
     max_rouge = 0.0
     if multi_tl:
         abstract_str_list = [
@@ -344,7 +369,7 @@ def random_greed_selection_tls(
             c = selected + [i]
             sent_str_combination = [_rm_blank(sents_str_list[idx]) for idx in c]
             sent_date_combination = [sents_date_list[idx] for idx in c]
-            rouge_1, rouge_2 = cal_rouge_tls(  # TODO(multi_tl)
+            rouge_1, rouge_2 = cal_rouge_tls(
                 sent_str_combination,
                 sent_date_combination,
                 abstract_str_list,
@@ -352,7 +377,7 @@ def random_greed_selection_tls(
                 mode="cat",
                 multi_tl=multi_tl,
             )
-            date_f1 = cal_date_f1(  # TODO(multi_tl)
+            date_f1 = cal_date_f1(
                 sent_date_combination, abstract_date_list, multi_tl=multi_tl
             )["f1"]
             print(rouge_1, rouge_2, date_f1)
@@ -364,6 +389,59 @@ def random_greed_selection_tls(
             return selected, sents_str_list, sents_date_list
         selected.append(cur_id)
         max_rouge = cur_max_rouge
+
+    return sorted(selected), sents_str_list, sents_date_list
+
+
+def independent_greedy_selection_tls(
+    doc_sent_list,
+    abstract_sent_list,
+    doc_date_list,
+    abstract_date_list,
+    summary_size,
+    random_size=20,
+    multi_tl=False,
+):
+    if multi_tl:
+        abstract_str_list = [
+            [_rm_blank(_rouge_clean(" ".join(s))) for s in one_sent_list]
+            for one_sent_list in abstract_sent_list
+        ]
+    else:
+        abstract_str_list = [
+            _rm_blank(_rouge_clean(" ".join(s))) for s in abstract_sent_list
+        ]
+    sents_str_list, sents_date_list = _process_source(doc_sent_list, doc_date_list)
+
+    selected = []
+
+    score_list = []
+    min_size = min(summary_size, int(0.33 * len(sents_str_list)))
+    for j in tqdm(range(len(sents_str_list) // 10 - 1)):
+        c = [
+            j * 10 + i
+            for i in range(10)
+            if len(_rm_blank(sents_str_list[j * 10 + i])) != 0
+        ]
+        sent_str_combination = [_rm_blank(sents_str_list[idx]) for idx in c]
+        sent_date_combination = [sents_date_list[idx] for idx in c]
+        rouge_1, rouge_2 = cal_rouge_tls(
+            sent_str_combination,
+            sent_date_combination,
+            abstract_str_list,
+            abstract_date_list,
+            multi_tl=multi_tl,
+        )
+        date_f1 = cal_date_f1(
+            sent_date_combination, abstract_date_list, multi_tl=multi_tl
+        )["f1"]
+        rouge_score = rouge_1 + rouge_2 + date_f1
+        for idx in c:
+            score_list.append((idx, rouge_score))
+
+    score_list = sorted(score_list, key=lambda x: x[1], reverse=True)[:min_size]
+    print(score_list)
+    selected = [i for i, score in score_list]
 
     return sorted(selected), sents_str_list, sents_date_list
 
@@ -446,6 +524,7 @@ class BertData:
         if len(src) == 0:
             return None
 
+        print(oracle_ids, len(src))
         original_src_txt = [" ".join(s) for s in src]
 
         labels = [0] * len(src)
@@ -471,8 +550,11 @@ class BertData:
         if len(src_subtokens) < 510:
             src_subtokens += ["[PAD]"] * (510 - len(src_subtokens))
         else:
-            truncate_point = (len(src_subtokens) // 512) * 512 - 2
-            src_subtokens = src_subtokens[:truncate_point]
+            truncate_point = (len(src_subtokens) // 512 + 1) * 512 - 2
+            if truncate_point > len(src_subtokens):
+                src_subtokens += ["[PAD]"] * (truncate_point - len(src_subtokens))
+            else:
+                src_subtokens = src_subtokens[:truncate_point]
         src_subtokens = ["[CLS]"] + src_subtokens + ["[SEP]"]
 
         src_subtoken_idxs = self.tokenizer.convert_tokens_to_ids(src_subtokens)
@@ -486,8 +568,12 @@ class BertData:
                 segments_ids += s * [1]
         cls_ids = [i for i, t in enumerate(src_subtoken_idxs) if t == self.cls_vid]
         labels = labels[: len(cls_ids)]
-
-        tgt_txt = "<q>".join([" ".join(tt) for tt in tgt])
+        if self.args.multi_tl:
+            tgt_txt = "<t>".join(
+                ["<q>".join([" ".join(tt) for tt in one_tl]) for one_tl in tgt]
+            )
+        else:
+            tgt_txt = "<q>".join([" ".join(tt) for tt in tgt])
         src_txt = [original_src_txt[i] for i in idxs]
         return (
             src_subtoken_idxs,
@@ -510,6 +596,10 @@ def format_to_bert(args):
         a_lst = []
         for json_f in glob.glob(pjoin(args.raw_path, "*" + corpus_type + ".*.json")):
             real_name = json_f.split("/")[-1]
+            if args.oracle_mode == "independent_greedy":
+                real_name = (
+                    real_name.split(".")[0] + "3." + ".".join(real_name.split(".")[1:])
+                )
             a_lst.append(
                 (
                     json_f,
@@ -517,13 +607,13 @@ def format_to_bert(args):
                     pjoin(args.save_path, real_name.replace("json", "bert.pt")),
                 )
             )
-        print(a_lst)
-        param = (
-            json_f,
-            args,
-            pjoin(args.save_path, real_name.replace("json", "bert.pt")),
-        )
-        _format_to_bert_tls(param)
+            print(json_f)
+            param = (
+                json_f,
+                args,
+                pjoin(args.save_path, real_name.replace("json", "bert.pt")),
+            )
+            _format_to_bert_tls(param)
         # pool = Pool(args.n_cpus)
         # imap_fun = (
         #     _format_to_bert_tls
@@ -588,9 +678,9 @@ def tokenize(args):
 
 def _format_to_bert(params):
     json_file, args, save_file = params
-    if os.path.exists(save_file):
-        logger.info("Ignore %s" % save_file)
-        return
+    # if os.path.exists(save_file):
+    #     logger.info("Ignore %s" % save_file)
+    #     return
 
     bert = BertData(args)
 
@@ -622,16 +712,19 @@ def _format_to_bert(params):
     gc.collect()
 
 
+import news_tls.data import Dataset
+
 def _format_to_bert_tls(params):
     json_file, args, save_file = params
-    if os.path.exists(save_file):
-        logger.info("Ignore %s" % save_file)
-        return
+    # if os.path.exists(save_file):
+    #     logger.info("Ignore %s" % save_file)
+    #     return
 
     bert = BertData(args)
 
     logger.info("Processing %s" % json_file)
     jobs = json.load(open(json_file))
+    
     datasets = []
     for d in jobs:
         if args.tls_mode == "pretrain":
@@ -657,11 +750,11 @@ def _format_to_bert_tls(params):
             if args.oracle_mode == "greedy":
                 oracle_ids, sents_str_list, sents_date_list = greedy_selection_tls(
                     source, tgt, source_date, tgt_date, 3, multi_tl=args.multi_tl
-                )  # TODO(multi_tl)
+                )
             elif args.oracle_mode == "combination":
                 oracle_ids, sents_str_list, sents_date_list = combination_selection_tls(
                     source, tgt, source_date, tgt_date, len(tgt), multi_tl=args.multi_tl
-                )  # TODO(multi_tl)
+                )
             elif args.oracle_mode == "random_greedy":
                 (
                     oracle_ids,
@@ -673,13 +766,29 @@ def _format_to_bert_tls(params):
                     source_date,
                     tgt_date,
                     summary_size=args.tgt_size,
-                    random_size=20,
+                    random_size=10,
                     multi_tl=args.multi_tl,
-                )  # TODO(multi_tl)
+                )
+            elif args.oracle_mode == "independent_greedy":
+                (
+                    oracle_ids,
+                    sents_str_list,
+                    sents_date_list,
+                ) = independent_greedy_selection_tls(
+                    source,
+                    tgt,
+                    source_date,
+                    tgt_date,
+                    summary_size=args.tgt_size,
+                    random_size=10,
+                    multi_tl=args.multi_tl,
+                )
+
             source = _sent2token(sents_str_list)
         if len(source) == 0:
             continue
-        # TODO(multi_tl)
+        print("source", source)
+        # TODO: add tf-idf matrix and make it into bertdata, notice should add the last in the data loader and change the i
         b_data = bert.preprocess_tls(
             source, tgt, sents_date_list, tgt_date, oracle_ids, multi_tl=args.multi_tl
         )
@@ -695,6 +804,7 @@ def _format_to_bert_tls(params):
             src_date,
             tgt_date,
         ) = b_data
+        print(labels)
         b_data_dict = {
             "src": indexed_tokens,
             "labels": labels,

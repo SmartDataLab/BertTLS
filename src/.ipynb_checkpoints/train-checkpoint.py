@@ -20,11 +20,6 @@ from models.data_loader import load_dataset
 from models.model_builder import Summarizer
 from models.trainer import build_trainer
 from others.logging import logger, init_logger
-from wheels.mongo_logger import Logger
-
-
-db_logger = Logger("news-tls", "acl_v1")
-
 
 model_flags = [
     "hidden_size",
@@ -231,12 +226,7 @@ def test(args, device_id, pt, step):
         test_from = args.test_from
     logger.info("Loading checkpoint from %s" % test_from)
     checkpoint = torch.load(test_from, map_location=lambda storage, loc: storage)
-
-    opt = (
-        vars(checkpoint["opt"])
-        if type(checkpoint["opt"]) != dict
-        else checkpoint["opt"]
-    )
+    opt = vars(checkpoint["opt"])
     for k in opt.keys():
         if k in model_flags:
             setattr(args, k, opt[k])
@@ -256,7 +246,7 @@ def test(args, device_id, pt, step):
         is_test=True,
     )
     trainer = build_trainer(args, device_id, model, None)
-    trainer.test(test_iter, step, is_tls=args.is_tls)
+    trainer.test(test_iter, step)
 
 
 def baseline(args, cal_lead=False, cal_oracle=False):
@@ -273,9 +263,9 @@ def baseline(args, cal_lead=False, cal_oracle=False):
     trainer = build_trainer(args, device_id, None, None)
     #
     if cal_lead:
-        trainer.test(test_iter, 0, cal_lead=True, is_tls=args.is_tls)
+        trainer.test(test_iter, 0, cal_lead=True)
     elif cal_oracle:
-        trainer.test(test_iter, 0, cal_oracle=True, is_tls=args.is_tls)
+        trainer.test(test_iter, 0, cal_oracle=True)
 
 
 def train(args, device_id):
@@ -312,12 +302,7 @@ def train(args, device_id):
         checkpoint = torch.load(
             args.train_from, map_location=lambda storage, loc: storage
         )
-        # opt = vars(checkpoint["opt"])
-        opt = (
-            vars(checkpoint["opt"])
-            if type(checkpoint["opt"]) != dict
-            else checkpoint["opt"]
-        )
+        opt = vars(checkpoint["opt"])
         for k in opt.keys():
             if k in model_flags:
                 setattr(args, k, opt[k])
@@ -330,7 +315,7 @@ def train(args, device_id):
     trainer = build_trainer(args, device_id, model, optim)
     trainer.train(train_iter_fct, args.train_steps)
 
-# TODO: remove the batch normalization make the model.eval() only for the dropout
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
@@ -341,23 +326,15 @@ if __name__ == "__main__":
         choices=["classifier", "transformer", "rnn", "baseline"],
     )
     parser.add_argument(
-        "-mode",
-        default="train",
-        type=str,
-        choices=["train", "validate", "test", "lead", "oracle"],
+        "-mode", default="train", type=str, choices=["train", "validate", "test"]
     )
-    parser.add_argument(
-        "-bert_data_path", default="../bert_data/entities"
-    )  # ../bert_data/cnndm
+    parser.add_argument("-bert_data_path", default="../bert_data/cnndm")
     parser.add_argument("-model_path", default="../models/")
-    parser.add_argument("-result_path", default="../results/nyt")  # ../results/cnndm
+    parser.add_argument("-result_path", default="../results/cnndm")
     parser.add_argument("-temp_dir", default="../temp/")
     parser.add_argument("-bert_config_path", default="../bert_config_uncased_base.json")
 
-    parser.add_argument("-batch_size", default=3, type=int)
-    parser.add_argument(
-        "-use_date", type=str2bool, nargs="?", const=True, default=False
-    )
+    parser.add_argument("-batch_size", default=1000, type=int)
 
     parser.add_argument(
         "-use_interval", type=str2bool, nargs="?", const=True, default=True
@@ -366,7 +343,7 @@ if __name__ == "__main__":
     parser.add_argument("-ff_size", default=512, type=int)
     parser.add_argument("-heads", default=4, type=int)
     parser.add_argument("-inter_layers", default=2, type=int)
-    parser.add_argument("-rnn_size", default=768, type=int)
+    parser.add_argument("-rnn_size", default=512, type=int)
 
     parser.add_argument("-param_init", default=0, type=float)
     parser.add_argument(
@@ -374,50 +351,41 @@ if __name__ == "__main__":
     )
     parser.add_argument("-dropout", default=0.1, type=float)
     parser.add_argument("-optim", default="adam", type=str)
-    parser.add_argument("-lr", default=1e-4, type=float)
+    parser.add_argument("-lr", default=1, type=float)
     parser.add_argument("-beta1", default=0.9, type=float)
     parser.add_argument("-beta2", default=0.999, type=float)
     parser.add_argument("-decay_method", default="", type=str)
-    parser.add_argument("-warmup_steps", default=3000, type=int)
+    parser.add_argument("-warmup_steps", default=8000, type=int)
     parser.add_argument("-max_grad_norm", default=0, type=float)
 
-    parser.add_argument("-save_checkpoint_steps", default=5000, type=int)
+    parser.add_argument("-save_checkpoint_steps", default=5, type=int)
     parser.add_argument("-accum_count", default=1, type=int)
     parser.add_argument("-world_size", default=1, type=int)
     parser.add_argument("-report_every", default=1, type=int)
-    parser.add_argument("-train_steps", default=10000, type=int)
+    parser.add_argument("-train_steps", default=1000, type=int)
     parser.add_argument(
         "-recall_eval", type=str2bool, nargs="?", const=True, default=False
     )
 
     parser.add_argument("-visible_gpus", default="-1", type=str)
     parser.add_argument("-gpu_ranks", default="0", type=str)
-    parser.add_argument("-log_file", default="../logs/nyt.log")  # ../logs/cnndm.log
+    parser.add_argument("-log_file", default="../logs/cnndm.log")
     parser.add_argument("-dataset", default="")
     parser.add_argument("-seed", default=666, type=int)
 
     parser.add_argument(
         "-test_all", type=str2bool, nargs="?", const=True, default=False
     )
-    parser.add_argument("-test_from", default="../models/model_naive_rouge_best.pt")
-    parser.add_argument("-train_from", default="../models/model_naive_rouge_best.pt")
+    parser.add_argument("-test_from", default="")
+    parser.add_argument("-train_from", default="")
     parser.add_argument(
         "-report_rouge", type=str2bool, nargs="?", const=True, default=True
     )
     parser.add_argument(
         "-block_trigram", type=str2bool, nargs="?", const=True, default=True
     )
-    parser.add_argument("-is_tls", type=str2bool, nargs="?", const=True, default=True)
-    parser.add_argument(
-        "-multi_tl", type=str2bool, nargs="?", const=True, default=False
-    )
-    parser.add_argument("-pred_size", default=5, type=int)
 
     args = parser.parse_args()
-    args_d = {key: value for key, value in args._get_kwargs()}
-    db_logger.add_attr("args", args_d, "info")
-    db_logger.insert_into_db("info")
-    setattr(args, "db_logger", db_logger)
     args.gpu_ranks = [int(i) for i in args.gpu_ranks.split(",")]
     os.environ["CUDA_VISIBLE_DEVICES"] = args.visible_gpus
 

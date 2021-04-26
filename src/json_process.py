@@ -1,4 +1,6 @@
+#%%
 import pandas as pd
+
 import numpy as np
 import json
 
@@ -66,6 +68,8 @@ json.dump(nyt_test_list, open(target_path + "nyt.test.0.json", "w"))
 
 json_path = "../../../data/datasets/nyt_new%20structure/crisis_new.json"
 d_list = json.load(open(json_path))
+#%%
+d_list[0]["src"][0]
 #%%
 def get_new_structure_one(x):
     num_list = [key.replace("tgt_date", "") for key in x.keys() if "tgt_date" in key]

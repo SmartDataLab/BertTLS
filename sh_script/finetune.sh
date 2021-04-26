@@ -1,1 +1,1 @@
-python ../src/train.py -visible_gpus 1 -train_from "" -encoder rnn -bert_data_path ../bert_data/entities
+python ../src/train.py -visible_gpus 1 -train_steps 80000 -train_from "../models/nyt_model_1612055512_step_50000.pt" -use_date True -encoder transformer -bert_data_path ../bert_data/t173

@@ -6,58 +6,6 @@ import torch
 
 from others.logging import logger
 
-# from others.utils import get_mini_minibatch
-
-
-def get_mini_minibatch(ex, is_test):
-    def _get_sent_range(clss):
-        sent_range_list = [0]
-        count = 1
-        for i in range(len(clss) - 1):
-            if clss[i] >= (count * 512):
-                sent_range_list.append(i)
-                count += 1
-        sent_range_list.append(len(clss))
-        return sent_range_list
-
-    if is_test:
-        # print(ex)
-        yield ex
-    else:
-        src = ex["src"]
-        if "labels" in ex:
-            labels = ex["labels"]
-        else:
-            labels = ex["src_sent_labels"]
-
-        segs = ex["segs"]
-        clss = ex["clss"]
-        src_txt = ex["src_txt"]
-        tgt_txt = ex["tgt_txt"]
-        src_date = ex["src_date"]
-        if is_test:
-            tgt_date = ex["tgt_date"]
-        else:
-            tgt_date = None
-
-        sent_range_list = _get_sent_range(clss)
-        for i in range(len(src) // 512):
-            if i + 1 >= len(sent_range_list):
-                continue
-            start, end = i * 512, (i + 1) * 512
-            sent_start, sent_end = sent_range_list[i], sent_range_list[i + 1]
-            if len(src_date[sent_start:sent_end]) > 0:
-                yield {
-                    "src": src[start:end],
-                    "labels": labels[sent_start:sent_end],
-                    "segs": segs[start:end],
-                    "clss": [x - i * 512 for x in clss[sent_start:sent_end]],
-                    "src_txt": src_txt[sent_start:sent_end],
-                    "tgt_txt": tgt_txt,
-                    "src_date": src_date[sent_start:sent_end],
-                    "tgt_date": tgt_date,
-                }
-
 
 class Batch(object):
     def _pad(self, data, pad_id, width=-1):
@@ -66,7 +14,7 @@ class Batch(object):
         rtn_data = [d + [pad_id] * (width - len(d)) for d in data]
         return rtn_data
 
-    def __init__(self, data=None, device=None, is_test=False, is_tls=True):
+    def __init__(self, data=None, device=None, is_test=False):
         """Create a Batch from a list of examples."""
         if data is not None:
             self.batch_size = len(data)
@@ -92,16 +40,11 @@ class Batch(object):
             setattr(self, "segs", segs.to(device))
             setattr(self, "mask", mask.to(device))
 
-            src_date = [x[6] for x in data]
-            setattr(self, "src_date", src_date)
             if is_test:
-                src_str = [x[4] for x in data]
+                src_str = [x[-2] for x in data]
                 setattr(self, "src_str", src_str)
-                tgt_str = [x[5] for x in data]
+                tgt_str = [x[-1] for x in data]
                 setattr(self, "tgt_str", tgt_str)
-                if is_tls:
-                    tgt_date = [x[7] for x in data]
-                    setattr(self, "tgt_date", tgt_date)
 
     def __len__(self):
         return self.batch_size
@@ -245,45 +188,28 @@ class DataIterator(object):
         clss = ex["clss"]
         src_txt = ex["src_txt"]
         tgt_txt = ex["tgt_txt"]
-        src_date = ex["src_date"]
-        if self.args.is_tls and is_test:
-            tgt_date = ex["tgt_date"]
 
         if is_test:
-            if self.args.is_tls:
-                return src, labels, segs, clss, src_txt, tgt_txt, src_date, tgt_date
-            else:
-                return (
-                    src,
-                    labels,
-                    segs,
-                    clss,
-                    src_txt,
-                    tgt_txt,
-                    None,
-                    None,
-                )
+            return src, labels, segs, clss, src_txt, tgt_txt
         else:
-            return src, labels, segs, clss, None, None, src_date, None
+            return src, labels, segs, clss
 
     def batch_buffer(self, data, batch_size):
         minibatch, size_so_far = [], 0
-        for ex_ in data:
-            # print(ex_)
-            for ex in get_mini_minibatch(ex_, self.is_test):
-                if len(ex["src"]) == 0:
-                    continue
-                ex = self.preprocess(ex, self.is_test)
-                if ex is None:
-                    continue
-                minibatch.append(ex)
-                size_so_far = simple_batch_size_fn(ex, len(minibatch))
-                if size_so_far == batch_size:
-                    yield minibatch
-                    minibatch, size_so_far = [], 0
-                elif size_so_far > batch_size:
-                    yield minibatch[:-1]
-                    minibatch, size_so_far = minibatch[-1:], simple_batch_size_fn(ex, 1)
+        for ex in data:
+            if len(ex["src"]) == 0:
+                continue
+            ex = self.preprocess(ex, self.is_test)
+            if ex is None:
+                continue
+            minibatch.append(ex)
+            size_so_far = simple_batch_size_fn(ex, len(minibatch))
+            if size_so_far == batch_size:
+                yield minibatch
+                minibatch, size_so_far = [], 0
+            elif size_so_far > batch_size:
+                yield minibatch[:-1]
+                minibatch, size_so_far = minibatch[-1:], simple_batch_size_fn(ex, 1)
         if minibatch:
             yield minibatch
 
@@ -310,11 +236,7 @@ class DataIterator(object):
                     continue
                 self.iterations += 1
                 self._iterations_this_epoch += 1
-                if len(minibatch) == 0:
-                    continue
-                batch = Batch(
-                    minibatch, self.device, self.is_test, is_tls=self.args.is_tls
-                )
+                batch = Batch(minibatch, self.device, self.is_test)
 
                 yield batch
             return

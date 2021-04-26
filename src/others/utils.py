@@ -132,7 +132,8 @@ def datestr2datetime(date_str):
 
 def get_dict_for_tl(src_list, date_list):
     tl_dict = {date: [] for date in set(date_list)}
-    for i in range(len(date_list)):
+    min_size = min(len(src_list), len(date_list))
+    for i in range(min_size):
         tl_dict[date_list[i]].append(src_list[i])
     return tl_dict
 
@@ -148,7 +149,9 @@ def cal_rouge_tls(
     """
     docstring
     """
-    evaluator = rouge.TimelineRougeEvaluator(measures=["rouge_1", "rouge_2"])
+    evaluator = rouge.TimelineRougeEvaluator(
+        measures=["rouge_1", "rouge_2"], rouge_computation="original"
+    )
     doc_datetime_list = [datestr2datetime(date_str) for date_str in doc_date_list]
     predicted_timeline = timelines.Timeline(
         get_dict_for_tl(doc_sent_list, doc_datetime_list)
@@ -190,9 +193,8 @@ def date_truncate(x):
     return x
 
 
-def cal_date_f1(pred_date_list, abstract_date_list, multi_tl=False):
+def _cal_date_f1(pred_date_list, abstract_date_list):
     pred_counts = collections.Counter([date_truncate(x) for x in pred_date_list])
-
     ref_counts = collections.Counter([date_truncate(x) for x in abstract_date_list])
     match = 0
     for tok in pred_counts:
@@ -207,6 +209,20 @@ def cal_date_f1(pred_date_list, abstract_date_list, multi_tl=False):
         "r": match / recall_denom,
         "f1": 2 * match / (prec_denom + recall_denom),
     }
+
+
+def cal_date_f1(pred_date_list, abstract_date_list, multi_tl=False):
+    if multi_tl:
+        res_list = [
+            _cal_date_f1(pred_date_list, one_tl) for one_tl in abstract_date_list
+        ]
+        return {
+            "p": sum([x["p"] for x in res_list]) / len(res_list),
+            "r": sum([x["r"] for x in res_list]) / len(res_list),
+            "f1": sum([x["f1"] for x in res_list]) / len(res_list),
+        }
+    else:
+        return _cal_date_f1(pred_date_list, abstract_date_list)
 
 
 def _order_source(sent_str_list, src_date_list):
@@ -227,8 +243,9 @@ def _process_source(sent_str_list, src_date_list):
             continue
         sents_one_date = [_rouge_clean(x) for x in " ".join(sent_token_list).split(".")]
         dates_one_date = [src_date_list[i]] * len(sents_one_date)
-        new_sent_str_list += sents_one_date
-        new_str_date_list += dates_one_date
+        # TODO(sujinhua): refract make this can be modi
+        new_sent_str_list += sents_one_date[: min(1, len(sents_one_date))]
+        new_str_date_list += dates_one_date[: min(1, len(sents_one_date))]
 
     return new_sent_str_list, new_str_date_list
 

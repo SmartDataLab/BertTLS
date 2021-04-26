@@ -13,9 +13,14 @@ from others.logging import logger
 from others.utils import test_rouge, rouge_results_to_str, cal_rouge_tls, cal_date_f1
 
 
-def get_clss_split(clss, msk_cls, start, end):
+def get_clss_split(clss, msk_cls, date_left, start, end):
     selector = (clss >= start) * (clss < end)
-    return (clss - start)[selector].unsqueeze(0), msk_cls[selector].unsqueeze(0)
+    return (
+        (clss - start)[selector].unsqueeze(0),
+        msk_cls[selector].unsqueeze(0),
+        [one[: selector.sum()] for one in date_left],
+        [one[selector.sum() :] for one in date_left],
+    )
 
 
 def _tally_parameters(model):
@@ -288,19 +293,28 @@ class Trainer(object):
                         else:
                             sent_scores_list = []
                             mask_loss_list = []
+                            date_input = None
+                            date_left = src_date.copy()
                             for i in range(segs.size()[1] // 512):
                                 start, end = i * 512, (i * 512 + 512)
-                                clss_, mask_cls_ = get_clss_split(
-                                    clss, mask_cls, start, end
+                                (
+                                    clss_,
+                                    mask_cls_,
+                                    date_input,
+                                    date_left,
+                                ) = get_clss_split(
+                                    clss, mask_cls, date_left, start, end
                                 )
+                                if len(date_input[0]) == 0:
+                                    continue
                                 tmp_score, mask_loss_tmp = self.model(
                                     src[:, start:end, ...],
                                     segs[:, start:end, ...],
                                     clss_,
                                     mask[:, start:end, ...],
                                     mask_cls_,
+                                    date_input=date_input,
                                 )
-                                print(i, tmp_score)
                                 sent_scores_list.append(tmp_score)
                                 mask_loss_list.append(mask_loss_tmp)
                             if i == 0:
@@ -309,8 +323,11 @@ class Trainer(object):
                             else:
                                 sent_scores = torch.cat(sent_scores_list, dim=1)
                                 mask_loss = torch.cat(mask_loss_list, dim=1)
-                            # print(i, sent_scores, labels)
-                            loss = self.loss(sent_scores, labels.float())
+                            print(i, sent_scores, labels)
+                            min_size = min(sent_scores.size()[1], labels.size()[1])
+                            loss = self.loss(
+                                sent_scores[:, :min_size], labels[:, :min_size].float()
+                            )
                             loss = (loss * mask_loss.float()).sum()
                             batch_stats = Statistics(
                                 float(loss.cpu().data.numpy()), len(labels)
@@ -346,19 +363,46 @@ class Trainer(object):
                                 if (
                                     (not cal_oracle)
                                     and (not self.args.recall_eval)
-                                    and len(_pred) == 3
+                                    and len(_pred)
+                                    >= max(labels.sum(), self.args.pred_size)
                                 ):
                                     break
 
                             if is_tls:
+                                if self.args.multi_tl:
+                                    tgt = [
+                                        one.split("<q>")
+                                        for one in batch.tgt_str[i].split("<t>")
+                                    ]
+                                else:
+                                    tgt = batch.tgt_str[i].split("<q>")
+                                # try:
                                 rouge1, rouge2 = cal_rouge_tls(
                                     _pred,
                                     _date,
-                                    batch.tgt_str[i].split("<q>"),
+                                    tgt,
                                     tgt_date[i],
+                                    multi_tl=self.args.multi_tl,
                                 )
-                                date_f1 = cal_date_f1(_date, tgt_date[i])["f1"]
-                                tls_rouge_list.append((rouge1, rouge2, date_f1))
+                                # except Exception as e:
+                                #     print(e)
+                                #     continue
+                                cat_rouge1, cat_rouge2 = cal_rouge_tls(
+                                    _pred,
+                                    _date,
+                                    tgt,
+                                    tgt_date[i],
+                                    mode="cat",
+                                    multi_tl=self.args.multi_tl,
+                                )
+                                date_f1 = cal_date_f1(
+                                    _date,
+                                    tgt_date[i],
+                                    multi_tl=self.args.multi_tl,
+                                )["f1"]
+                                tls_rouge_list.append(
+                                    (rouge1, rouge2, date_f1, cat_rouge1, cat_rouge2)
+                                )
                             else:
                                 _pred = "<q>".join(_pred)
                                 if self.args.recall_eval:
@@ -377,19 +421,25 @@ class Trainer(object):
             if is_tls:
                 rouge1_list = [x[0] for x in tls_rouge_list]
                 rouge2_list = [x[1] for x in tls_rouge_list]
+                cat_rouge1_list = [x[3] for x in tls_rouge_list]
+                cat_rouge2_list = [x[4] for x in tls_rouge_list]
                 date_f1_list = [x[2] for x in tls_rouge_list]
                 logger.info(
-                    "Rouges at step %d \n rouge1 : %s, rouge2: %s, date_f1: %s"
+                    "Rouges at step %d \n rouge1 : %s, rouge2: %s, date_f1: %s, cat_rouge1 : %s, cat_rouge2: %s,"
                     % (
                         step,
                         sum(rouge1_list) / len(tls_rouge_list),
                         sum(rouge2_list) / len(tls_rouge_list),
                         sum(date_f1_list) / len(date_f1_list),
+                        sum(cat_rouge1_list) / len(tls_rouge_list),
+                        sum(cat_rouge2_list) / len(tls_rouge_list),
                     )
                 )
                 self.args.db_logger.add_attr("rouge1", rouge1_list, "test")
                 self.args.db_logger.add_attr("rouge2", rouge2_list, "test")
                 self.args.db_logger.add_attr("date_f1", date_f1_list, "test")
+                self.args.db_logger.add_attr("cat_rouge1", cat_rouge1_list, "test")
+                self.args.db_logger.add_attr("cat_rouge2", cat_rouge2_list, "test")
                 self.args.db_logger.insert_into_db("test")
             else:
                 rouges = test_rouge(self.args.temp_dir, can_path, gold_path)
@@ -420,16 +470,21 @@ class Trainer(object):
             sent_scores_list = []
             mask_loss_list = []
             count = 0
+            date_input = None
+            date_left = batch.src_date.copy()
             for _ in range(segs.size()[1] // 512):
 
                 start, end = count * 512, (count * 512 + 512)
-                clss_, mask_cls_ = get_clss_split(clss, mask_cls, start, end)
+                clss_, mask_cls_, date_input, date_left = get_clss_split(
+                    clss, mask_cls, date_left, start, end
+                )
                 tmp_score, mask_loss_tmp = self.model(
                     src[:, start:end, ...],
                     segs[:, start:end, ...],
                     clss_,
                     mask[:, start:end, ...],
                     mask_cls_,
+                    date_input=date_input,
                 )
                 sent_scores_list.append(tmp_score)
                 mask_loss_list.append(mask_loss_tmp)
@@ -443,14 +498,15 @@ class Trainer(object):
                 sent_scores = torch.cat(sent_scores_list, dim=1)
                 mask_loss = torch.cat(mask_loss_list, dim=1)
             # sent_scores, mask = self.model(src, segs, clss, mask, mask_cls)
-
+            min_size = min(
+                sent_scores.size()[1], labels.size()[1]
+            )  # TODO(sujinhua) fix bug temporally
             print("sent_score", sent_scores, "label", labels)
-            loss = self.loss(sent_scores, labels.float())
+            loss = self.loss(sent_scores[:, :min_size], labels[:, :min_size].float())
             loss = (loss * mask_loss.float()).sum()
             (loss / loss.numel()).backward()
             # loss.div(float(normalization)).backward()
 
-            # TODO(sujinhua): save to db base
             batch_stats = Statistics(float(loss.cpu().data.numpy()), normalization)
 
             total_stats.update(batch_stats)

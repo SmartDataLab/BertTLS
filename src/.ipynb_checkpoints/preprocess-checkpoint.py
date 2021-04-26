@@ -44,13 +44,13 @@ if __name__ == "__main__":
         help="format_to_lines or format_to_bert",
     )
     parser.add_argument(
-        "-tls_mode", default="finetune", type=str, help="pretrain or finetune or off"
+        "-tls_mode", default="pretrain", type=str, help="pretrain or finetune or off"
     )
     parser.add_argument(
         "-oracle_mode",
-        default="independent_greedy",
+        default="greedy",
         type=str,
-        help="how to generate oracle summaries, greedy or combination or random_greedy, independent_greedy, combination will generate more accurate oracles but take much longer time.",
+        help="how to generate oracle summaries, greedy or combination, combination will generate more accurate oracles but take much longer time.",
     )
     parser.add_argument("-map_path", default="../data/")
     parser.add_argument(
@@ -60,12 +60,10 @@ if __name__ == "__main__":
     parser.add_argument("-save_path", default="../bert_data/")
 
     parser.add_argument("-shard_size", default=2000, type=int)
-    parser.add_argument("-tgt_size", default=10, type=int)
-    parser.add_argument("-doc_max_size", default=3, type=int)
     parser.add_argument("-min_nsents", default=3, type=int)
-    parser.add_argument("-max_nsents", default=10000, type=int)
+    parser.add_argument("-max_nsents", default=100, type=int)
     parser.add_argument("-min_src_ntokens", default=5, type=int)
-    parser.add_argument("-max_src_ntokens", default=20, type=int)
+    parser.add_argument("-max_src_ntokens", default=200, type=int)
 
     parser.add_argument("-lower", type=str2bool, nargs="?", const=True, default=True)
 
@@ -78,11 +76,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument("-n_cpus", default=2, type=int)
-    parser.add_argument(
-        "-multi_tl", type=str2bool, nargs="?", const=True, default=False
-    )
 
     args = parser.parse_args()
-    print("tl mode", args.multi_tl)
     init_logger(args.log_file)
     eval("data_builder." + args.mode + "(args)")
